@@ -99,7 +99,22 @@ Cocos2d-x 窗口      Godot 窗口        轻量客人
 
 因此，状态收敛允许中间字段值被新采样覆盖。一次性动作使用单独的 RPC 语义。验证覆盖最后一次变化丢失、重复包、旧包晚到和最终 ACK 丢失。[复制代码](../core/state/replication.cpp) · [核心复制回归](../tests/core/replication_test.cpp)
 
-### 5.3 创建和销毁
+### 5.3 Shadow Buffer 与状态副本
+
+如果把 Shadow Buffer 定义为用于比较新旧属性值的上一份采样，那么自研核心已有对应机制。房主在 `AuthorityState::Entry::object.values` 保存每个对象最近采集的属性值。`capture` 先和这份值比较，再覆盖有变化的采样。实现中没有名为 `ShadowBuffer` 的独立类型。
+
+| 数据 | 作用 |
+| --- | --- |
+| 房主的 `object.values` 与 `changes` | 保存最新采样值及每个字段最后一次变化的对象版本。新采样与已有值比较时定位变化字段 |
+| 房主每条连接的 `Progress::ack` | 为每个对象记录该客人已确认到的版本。打包时发送 `changes[i] > ack` 的字段与其当前值。每条连接只记录版本，不另外保存一份完整属性副本 |
+| 客人的 `ReplicaState::objects_` | 保存最近应用的权威值。差量包只覆盖掩码中出现的字段，留下其余字段 |
+| 引擎适配器的显示值 | Cocos 的 `from/to/display` 和 Godot 的 `previous/target/displayed` 用于变换插值。显示值不会参与发送差量的判断 |
+
+例如，客人确认到版本 10，位置在版本 11 变化，油门在版本 12 变化。即使版本 11 的包丢失，房主仍会在后续版本 12 的记录中发送两个字段的最新值。另一位已经确认到版本 11 的客人只需收到油门。客人重连时，新连接从零确认进度开始，每个存活对象先得到完整字段。[复制数据结构](../core/state/replication.hpp) · [采集和差量实现](../core/state/replication.cpp) · [Cocos 显示状态](../engineplatform/cocos2dx/replicator.hpp) · [Godot 显示状态](../examples/godot-yard/replicator.gd)
+
+术语参考 Unreal 的 `FRepLayout::CreateShadowBuffer`，其文档将 Shadow Data 用于属性比较及客户端 RepNotify。Photon Fusion 2 的 `NetworkBehaviourBuffer` 则是网络状态快照的只读访问接口，支持读取历史快照和插值。本项目的发送差量依赖最新采样与字段版本，核心未保留供预测或回滚使用的逐 tick 快照历史。[Unreal Shadow Buffer](https://dev.epicgames.com/documentation/unreal-engine/API/Runtime/Engine/FRepLayout/CreateShadowBuffer) · [Fusion 2 网络缓冲区](https://doc.photonengine.com/fusion/v2/manual/advanced/network-buffers)
+
+### 5.4 创建和销毁
 
 | 操作 | 房主 | 客人 |
 | --- | --- | --- |
