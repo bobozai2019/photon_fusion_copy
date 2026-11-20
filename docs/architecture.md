@@ -213,6 +213,8 @@ Photon Fusion 的通道职责启发了状态与 RPC 的设计，Unreal 的 RPC �
 
 ## 12. Fusion Core v3 与自研 Core 的源码对照
 
+[完整架构对比](fusion-core-comparison.md)逐项展开对象布局、ACK、字节级包格式、RPC、重连、预测和已验证范围。
+
 **借鉴深入到状态复制的算法和引擎边界。** 两套实现都在引擎层解析属性，在引擎无关层保存对象状态、跟踪每个数据单元最近一次变化，并用确认进度驱动差量重发。项目采用类型化字段和逐客人对象版本，原版采用定长 word、Shadow 和逐 word 变化 tick。房间、传输和权威模型由各自实现决定。[本项目引擎边界](decisions/engine-boundary.md) · [传输取舍](decisions/game-transport.md) · [Fusion Core 架构](https://doc.photonengine.com/fusion-core/v3/manual/architecture)
 
 对照的原版为 **Fusion Godot Racing 3.0.0 Shared Authority**。样例脚本、场景和 C# 包装可读。原生 GDExtension 以编译库交付，图中的原生调用来自已核对 SHA-256 的 Linux x86-64 编辑器库。云端方框只描述该模式的公开职责。静态调用点证明路径存在，单个属性每帧采集次数和原版跨端写回仍待运行时验证。[参考构建指纹](../research/fusion/builds/racing-3.0.0.md) · [Godot SDK 交付内容](https://doc.photonengine.com/fusion-godot/v3-shared-authority/getting-started/sdk-download) · [原版运行探针](../research/fusion/probes/README.md)
