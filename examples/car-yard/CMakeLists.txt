@@ -1,0 +1,18 @@
+add_library(yard_match STATIC layout.cpp match.cpp runner.cpp)
+target_include_directories(yard_match PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(yard_match PUBLIC netcode_direct)
+
+add_executable(netcode-guest guest_main.cpp)
+target_link_libraries(netcode-guest PRIVATE yard_match)
+set_target_properties(netcode-guest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+set(asset_dirs "${CMAKE_CONFIGURATION_TYPES}")
+if(NOT asset_dirs)
+    set(asset_dirs ".")
+endif()
+foreach(config IN LISTS asset_dirs)
+    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/bin/${config}")
+    foreach(asset IN ITEMS replicators.cfg beacon.obj)
+        configure_file("${asset}" "${CMAKE_BINARY_DIR}/bin/${config}/${asset}" COPYONLY)
+    endforeach()
+endforeach()

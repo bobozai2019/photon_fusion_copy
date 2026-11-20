@@ -1,0 +1,25 @@
+config_version=5
+
+[application]
+
+config/name="Netcode Godot Car Yard"
+run/main_scene="res://yard.tscn"
+run/max_fps=60
+config/features=PackedStringArray("4.5", "GL Compatibility")
+
+[debug]
+
+file_logging/enable_file_logging=false
+
+[display]
+
+window/size/viewport_width=960
+window/size/viewport_height=640
+window/stretch/mode="canvas_items"
+window/vsync/vsync_mode=0
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+environment/defaults/default_clear_color=Color(0.047, 0.073, 0.11, 1)
