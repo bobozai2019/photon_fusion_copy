@@ -22,6 +22,8 @@ python -B tools/package_yard.py --verify-play
 
 ## 仓库导航
 
+[架构技术文档](docs/architecture.md)涵盖模块、协议、对象生命周期、RPC、重连和验收。
+
 第二套引擎接入使用 Godot 4 GDExtension。Godot 与 Cocos 样例从同一 C++ 目标获取房间、TCP/UDP、模拟和复制，沿用同一验收脚本。[Godot 构建和操作](examples/godot-yard/README.md) · [Godot 接入任务](task/godot-platform/总纲.md)
 
 | 路径 | 在这里维护什么 |
