@@ -17,6 +17,12 @@
 - **原版 Windows 插件**：同一个刚体启用 AUTO，顺次添加三个标量后，`compute_word_count` 返回 `15, 16, 17, 18`。这测量该配置的布局用量；字段具体偏移、线上包长度和采集频率需另外验证。
 - **仓库外教学实现**：手动推进采集后，模拟丢弃 tick 2、tick 3 重传、B 应用、ACK 后 tick 4 为空。它可作自研设计的回归参照。Fusion 的实际重传与 getter 时序尚无这个场景下的双端运行记录。
 
+## Core 中的 Shadow 与确认布局
+
+对同一 Linux 构建，`CheckForMutatedState` 在 `0x45a840` 和 `0x45a850` 读取对象偏移 `+0x1e8` 和 `+0x1f8` 对应的数组指针，以 4 字节为步长比较两组值。变化时 `0x45a871` 覆盖第二组的对应值，`0x45a885` 更新对象 `+0xc8` 指向的逐 word 记录。原版公开对象说明将第一、第二组分别称为 Words 和 Shadow。
+
+`WriteObjectRoot` 先扫描，再在 `0x462db1` 读取对象 `+0xc0` 的值作为 `WriteDirtyWords` 的阈值。`PacketDelivered` 在 `0x4593ec` 写入相同偏移。两条路径分开，说明逐 word 计算的变化可以在 Shadow 已更新后仍被选中发送。逐 word 上报规则有静态指令和公开契约支持。此构建下双端收到确认的具体时序仍需要原版在线探针。[Fusion Core 对象布局](https://doc.photonengine.com/fusion-core/v3/manual/objects#shadow-buffer) · [调用点与复查命令](../../../docs/architecture.md#原版调用与指令证据)
+
 ## 下一条可区分的观测
 
 同时记录原版 A 的脚本写入、复制属性 getter 次数、物理帧号以及 B 的实际应用。增加关闭该字段复制的控制组。若 getter 持续发生于没有业务读取的测量窗口，可进一步改变采集驱动与发送设置，检验“每物理步读一次”和“仅在特定出站条件下读取”的适用范围。

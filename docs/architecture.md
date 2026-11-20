@@ -112,7 +112,7 @@ Cocos2d-x 窗口      Godot 窗口        轻量客人
 
 例如，客人确认到版本 10，位置在版本 11 变化，油门在版本 12 变化。即使版本 11 的包丢失，房主仍会在后续版本 12 的记录中发送两个字段的最新值。另一位已经确认到版本 11 的客人只需收到油门。客人重连时，新连接从零确认进度开始，每个存活对象先得到完整字段。[复制数据结构](../core/state/replication.hpp) · [采集和差量实现](../core/state/replication.cpp) · [Cocos 显示状态](../engineplatform/cocos2dx/replicator.hpp) · [Godot 显示状态](../examples/godot-yard/replicator.gd)
 
-术语参考 Unreal 的 `FRepLayout::CreateShadowBuffer`，其文档将 Shadow Data 用于属性比较及客户端 RepNotify。Photon Fusion 2 的 `NetworkBehaviourBuffer` 则是网络状态快照的只读访问接口，支持读取历史快照和插值。本项目的发送差量依赖最新采样与字段版本，核心未保留供预测或回滚使用的逐 tick 快照历史。[Unreal Shadow Buffer](https://dev.epicgames.com/documentation/unreal-engine/API/Runtime/Engine/FRepLayout/CreateShadowBuffer) · [Fusion 2 网络缓冲区](https://doc.photonengine.com/fusion/v2/manual/advanced/network-buffers)
+Photon Fusion Core v3 的 `Object` 有真实的 `Words` 和 `Shadow` 两份缓冲。原版在发送阶段用最新编码值与 `Shadow` 逐 word 比较，再按变更 tick 和确认进度选择数据。本项目在采集阶段比较属性值，发包前按字段版本与客人确认进度筛选。`Shadow` 保存上次扫描值。需要逐 tick 历史的预测与回滚另有其状态要求，本项目当前只保留最新权威采样。下面第 12 节给出原版的二进制证据和自研源码对照。[Fusion Core v3 Shadow Buffer](https://doc.photonengine.com/fusion-core/v3/manual/objects#shadow-buffer) · [源码架构对照](#12-fusion-core-v3-与自研-core-的源码对照)
 
 ### 5.4 创建和销毁
 
@@ -210,3 +210,75 @@ python -B tools/package_godot.py --verify-play
 | 原版研究 | Fusion 的 Windows 离线布局探针已通过。原版在线双端探针在区域查询返回 `ApplicationNotFound`，因此原版双端写回待验证 |
 
 Photon Fusion 的通道职责启发了状态与 RPC 的设计，Unreal 的 RPC 方向矩阵用于定义调用方向。交付的连接、编码、房间、重连和适配器均是本项目实现。原版研究记录与实际自研验收分开保存。[原版探针说明](../research/fusion/probes/README.md) · [首版协议和取舍](decisions/first-edition-runtime.md)
+
+## 12. Fusion Core v3 与自研 Core 的源码对照
+
+**借鉴深入到状态复制的算法和引擎边界。** 两套实现都在引擎层解析属性，在引擎无关层保存对象状态、跟踪每个数据单元最近一次变化，并用确认进度驱动差量重发。项目采用类型化字段和逐客人对象版本，原版采用定长 word、Shadow 和逐 word 变化 tick。房间、传输和权威模型由各自实现决定。[本项目引擎边界](decisions/engine-boundary.md) · [传输取舍](decisions/game-transport.md) · [Fusion Core 架构](https://doc.photonengine.com/fusion-core/v3/manual/architecture)
+
+对照的原版为 **Fusion Godot Racing 3.0.0 Shared Authority**。样例脚本、场景和 C# 包装可读。原生 GDExtension 以编译库交付，图中的原生调用来自已核对 SHA-256 的 Linux x86-64 编辑器库。云端方框只描述该模式的公开职责。静态调用点证明路径存在，单个属性每帧采集次数和原版跨端写回仍待运行时验证。[参考构建指纹](../research/fusion/builds/racing-3.0.0.md) · [Godot SDK 交付内容](https://doc.photonengine.com/fusion-godot/v3-shared-authority/getting-started/sdk-download) · [原版运行探针](../research/fusion/probes/README.md)
+
+```mermaid
+flowchart LR
+  subgraph original["Fusion Godot Racing 3.0.0 · Shared Authority"]
+    direction TB
+    f1["样例源码 · vehicle.gd / vehicle.tscn<br/>对象权威端写属性，场景用 NodePath 声明绑定"]
+    f2["原生库 · Godot GDExtension<br/>Object::get → 按 word 偏移写入 Words"]
+    f3["原生库 · Client::UpdateFrameEnd / PacketQueueState<br/>WriteObjectRoot：比较 Words / Shadow，按 tick 筛选差量"]
+    f4["原生库 · Notify::Connection<br/>Game 状态 / Streaming 可靠 / Unreliable RPC"]
+    f5["原生库 · PhotonNotifyPlatform / RealtimeClient<br/>SendEvent、Service"]
+    f6["公开拓扑 · Photon Cloud 房间<br/>接受对象权威端提交并向其他端分发"]
+    f7["原生库 · StatePacketReceived / ReadObjectData<br/>对端合并编码状态，再由 Godot 绑定应用"]
+    f1 --> f2 --> f3 --> f4 --> f5
+    f5 -.-> f6 -.-> f7
+  end
+  subgraph ours["自研 netcode · 单房主权威"]
+    direction TB
+    n1["引擎入口 · Cocos YardScene / Godot NetcodeYard<br/>共用 Runner::update → Match::update"]
+    n2["样例模拟 · Match::simulate<br/>采集权威值 → AuthorityState::capture"]
+    n3["状态核心 · AuthorityState::packets<br/>字段变化版本大于该客人的对象 ACK 就发送最新值"]
+    n4["会话核心 · RoomHost / RoomGuest、Rpc<br/>房间与 RPC 分别管理状态，Match 负责调度"]
+    n5["Windows 传输 · Direct / Winsock<br/>TCP 管房间，UDP 送快照、确认、输入和 RPC"]
+    n6["对端状态 · ReplicaState::apply<br/>合并字段并发 StateAck，按对象版本过滤旧包"]
+    n7["引擎适配器 · Cocos / Godot<br/>按对象 ID 和模板建节点，更新字段与插值"]
+    n1 --> n2 --> n3 --> n5
+    n5 -.-> n6 --> n7
+    n1 --> n4 --> n5
+  end
+```
+
+实线表示本地源码或二进制可追踪的数据路径。虚线表示跨进程的公开部署关系。Fusion 的接收帧通过 `UpdateFrameBegin` 服务传输，收到的状态在 `StatePacketReceived` 处理。自研客人的 `StateAck` 经 UDP 回到房主的 `AuthorityState::acknowledge`。原版的确认进度对应权威提交到云房间，自研的确认进度对应房主到具体客人的对象状态。[Fusion 帧循环](https://doc.photonengine.com/fusion-core/v3/manual/frame-loop) · [自研帧循环](../examples/car-yard/match.cpp) · [自研确认与状态提交](../core/state/replication.cpp)
+
+### 原版调用与指令证据
+
+下列地址均为随包 Linux ELF 的虚拟地址。间接符号调用通过 `.plt.sec` 的跳转槽及重定位表核对。Godot 绑定内部缺少可用的函数名时使用地址。
+
+| 路径 | 已核对的实际调用或指令 |
+| --- | --- |
+| Godot 绑定 | `0x12b568 → 0x1a6cd0`，再从 `0x1a6cdc` 调用 `0x19db30`。普通字段在 `0x19dd6a` 调用 Godot 的 getter 包装，`0x19dd93` 计算 `base + 4 × wordOffset` |
+| 发送与分类 | `UpdateFrameEnd` 的 `0x464193` 调用 `PacketQueue`。后者在 `0x463f48 / 0x463f50 / 0x463f59` 分别调用可靠 RPC、不可靠 RPC 和状态的排队函数。`PacketQueueState` 在 `0x4635c7` 调用 `WriteObjectRoot` |
+| Shadow 与差量 | `WriteObjectRoot` 在 `0x462dac` 调用 `CheckForMutatedState`。`0x45a860–0x45a885` 从两组等步长 32 位数组读取并比较，不同时回填旧值数组并更新第三组数组的变化 tick。随后 `0x462dbf` 调用 `WriteDirtyWords`，后者在 `0x45a950` 比较逐 word 变更版本和传入阈值。`0x462db1` 读取的对象确认字段也由 `PacketDelivered` 在 `0x4593ec` 更新 |
+| Notify 与传输 | 状态在 `0x463a9a` 进入 `Notify::Connection::Queue`。`Send` 在 `0x4899d6` 调用 `SendChannel`，后者在 `0x48991b` 调用 `SendFragment`。分片经平台虚函数交付，Photon 平台的 `Send` 在 `0x455f70` 调用 `PhotonMatchmaking::RealtimeClient::SendEvent` |
+| 接收和生灭 | `PhotonNotifyPlatform::Recv` 在 `0x468708` 分派到 `StatePacketReceived`。状态解析在 `0x46569d` 调用 `ReadObjectData`，在 `0x465917` 尝试通知对象就绪，在 `0x465c63` 可处理远端对象销毁 |
+
+这些证据可以区分两种差量实现。一种把当前值与上次已确认的完整快照比较，另一种把当前值与上次扫描值比较、再通过独立的变更记录和确认阈值重发。原版的两处分离调用及确认字段写入支持后者。SDK 客户端的证据无法确定云房间内部的存储布局。可从同一份库复查，如下命令分别列出符号、PLT 跳槽与 Shadow 扫描指令，其他调用点可用同样的地址范围查看。[构建指纹](../research/fusion/builds/racing-3.0.0.md) · [字段绑定静态证据](../research/fusion/findings/property-binding.md) · [Fusion Notify 通道](https://doc.photonengine.com/fusion-core/v3/reference/notify-api)
+
+```powershell
+$sdk = '../photon-fusion-godot-starter-kit-racing_3.0.0/addons/fusion/bin'
+$so = "$sdk/libfusion.linux.editor.x86_64.release.so"
+llvm-nm -D -n -C $so | Select-String 'CheckForMutatedState|WriteDirtyWords|PacketQueueState'
+llvm-objdump -d -j .plt.sec --start-address=0xd48c0 --stop-address=0xd48d0 $so
+llvm-objdump -R --demangle $so | Select-String 'CheckForMutatedState'
+llvm-objdump -d --start-address=0x45a830 --stop-address=0x45a8a0 $so
+```
+
+### 借鉴深度逐项对照
+
+| 部分 | Fusion Core v3 / Racing | 本项目落点 |
+| --- | --- | --- |
+| 引擎边界 | Godot 场景声明和原生缓存把属性映射到固定 word。Core 帧循环通过引擎集成驱动 | 深度借鉴。`replicators.cfg` 定义共用身份，Cocos 和 Godot 各处理节点和路径，`Match` 显式调度无引擎核心 |
+| 增量状态和重发 | `Words + Shadow + 逐 word tick`，按服务端确认阈值发变化项 | 深度借鉴。`Object::values + Entry::changes + Progress::ack` 保存等价职责，比较单元改为字段，确认按客人和对象推进 |
+| 状态与 RPC 的通道职责 | Notify 的 Game、Streaming 和 Unreliable 有各自投递语义，并带确认和分片机制 | 职责借鉴。自研 `Snapshot/StateAck` 与 `Rpc/RpcAck`、有序窗口及 UDP 格式独立实现。四种 RPC 方向来自 UE 风格约定 |
+| 生命周期与兴趣 | `ObjectRoot / ObjectChild`、就绪和销毁、AOI、依赖和多地图。兴趣进入提供完整状态 | 完整状态初始化思路相关。本项目用单调对象 ID、销毁记录、逐对象基线和 `Ready` 恢复本局场景。客人接收全场，当前未实现 AOI、子对象协议或多地图 |
+| 权威、输入、拓扑 | Racing Shared 模式允许客户端持有对象权威并通过 Photon Cloud。Fusion Core 还公开另一套 Authority 模式的输入队列与预测接口 | 独立选型。当前使用房主唯一写权，客人仅提交控制量和请求，通过 TCP/UDP 直连。首版支持最新控制量、固定步模拟和显示插值 |
+
+[自研核心构建目标](../core/CMakeLists.txt) · [房间和恢复规格](specs/room-rejoin.md) · [RPC 方向和投递规格](specs/rpc.md) · [Fusion Core Ownership](https://doc.photonengine.com/fusion-core/v3/manual/ownership) · [Fusion Core Interest Area](https://doc.photonengine.com/fusion-core/v3/manual/interest-area)
