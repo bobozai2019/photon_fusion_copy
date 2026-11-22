@@ -1,7 +1,11 @@
 #include "session/script_game.hpp"
 #include "session/game_wire.hpp"
+#ifdef COMPAT_HAS_PROVIDER_HOST
+#include "host/provider.hpp"
+#endif
 
 #include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -24,15 +28,36 @@ public:
     explicit Trace(std::unique_ptr<Transport> link) : link_(std::move(link)) {}
     bool send(Peer peer, Lane lane, const Bytes& payload) override {
         const bool accepted = link_->send(peer, lane, payload);
-        if (accepted && !payload.empty()) {
+        if (accepted) record(peer, lane, payload);
+        return accepted;
+    }
+#ifdef COMPAT_HAS_PROVIDER_HOST
+    BatchResult send_batch(Peer peer, Lane lane, const Bytes* const* messages, std::size_t count) override {
+        auto result = link_->send_batch(peer, lane, messages, count);
+        for (size_t i = 0; i < result.accepted; ++i) record(peer, lane, *messages[i]);
+        return result;
+    }
+    bool supports_backpressure() const override { return link_->supports_backpressure(); }
+    bool reliable_ordered(Lane lane) const override { return link_->reliable_ordered(lane); }
+#endif
+    std::vector<Event> poll(TimePoint now) override { return link_->poll(now); }
+    void close(Peer peer) override { link_->close(peer); }
+    Traffic traffic() const override { return link_->traffic(); }
+
+private:
+    void record(Peer peer, Lane lane, const Bytes& payload) {
+        if (!payload.empty()) {
             auto data = payload;
             if (lane == Lane::Control && data.size() == 40 && data[0] == 1 && data[1] == 3) {
                 std::fill(data.begin() + 22, data.begin() + 38, 0); // Random resume key.
             } else if (lane == Lane::Game && data.size() > 34 && data[0] == uint8_t(GameMessage::Snapshot) && data[21] == 1) {
                 std::fill(data.begin() + 17, data.begin() + 21, 0); // Packet tick.
                 std::fill(data.begin() + 26, data.begin() + 34, 0); // Object revision and sample tick.
-            } else if (lane != Lane::Game || data[0] != uint8_t(GameMessage::Rpc)) {
-                return accepted;
+            } else {
+                const auto kind = GameMessage(data[0]);
+                const bool claim = lane == Lane::Control &&
+                    (kind == GameMessage::ClaimRequest || kind == GameMessage::ClaimResult);
+                if (!claim && (lane != Lane::Game || kind != GameMessage::Rpc)) return;
             }
             if (seen_.emplace(peer, lane, data).second) {
                 const char* hex = "0123456789abcdef";
@@ -41,12 +66,7 @@ public:
                 std::cout << std::endl;
             }
         }
-        return accepted;
     }
-    std::vector<Event> poll(TimePoint now) override { return link_->poll(now); }
-    void close(Peer peer) override { link_->close(peer); }
-    Traffic traffic() const override { return link_->traffic(); }
-private:
     std::unique_ptr<Transport> link_;
     std::set<std::tuple<Peer, Lane, Bytes>> seen_;
 };
@@ -73,8 +93,22 @@ ResumeTicket read_ticket(const char* path) {
     return result;
 }
 
-int run(bool host, bool resume, uint16_t port, const char* ticket_path) {
-    DirectConfig config{"127.0.0.1", port};
+std::unique_ptr<Transport> open_link(bool host, uint16_t port, const char* module) {
+    constexpr auto address = "127.0.0.1";
+#ifdef COMPAT_HAS_PROVIDER_HOST
+    if (module) {
+        auto provider = TransportProvider::load(std::filesystem::u8path(module), "direct");
+        std::cout << "PROVIDER " << provider.identity().label() << std::endl;
+        return provider.open(host, std::string(address) + ":" + std::to_string(port));
+    }
+#else
+    check(!module, "This SDK has no v1 provider host");
+#endif
+    DirectConfig config{address, port};
+    return host ? listen_direct(config) : connect_direct(config);
+}
+
+int run(bool host, bool resume, uint16_t port, const char* ticket_path, const char* module) {
     SessionOptions options;
     options.host = host;
     options.room = 812;
@@ -84,15 +118,16 @@ int run(bool host, bool resume, uint16_t port, const char* ticket_path) {
     if (resume) options.resume = read_ticket(ticket_path);
     std::istringstream text("schema 1 1 Board\nint 1 . score\n");
     const ReplicationLayout layout(text);
-    auto link = host ? listen_direct(config) : connect_direct(config);
-    ScriptGame game(std::make_unique<Trace>(std::move(link)), options, layout);
+    ScriptGame game(std::make_unique<Trace>(open_link(host, port, module)), options, layout);
     check(game.model(1, {1}, ClaimMode::Transaction, 0), "Cannot register writer");
     check(game.register_rpc(41, int(Direction::Server), true, 1, false, true), "Cannot register Proof");
     check(game.register_rpc(42, int(Direction::Client), true, 1, false, true), "Cannot register Reply");
     std::cout << "LISTEN " << (host ? "host" : "guest") << std::endl;
 
     int proofs = 0, replies = 0;
-    bool requested = false, sent = false;
+    bool requested = false, sent = false, claim_ready = false;
+    auto claim_file = std::filesystem::u8path(ticket_path);
+    claim_file += ".claim-ready";
     std::optional<TimePoint> exit_at;
     const auto expected_phase = resume ? 2 : 1;
     const auto deadline = Clock::now() + 15s;
@@ -107,10 +142,21 @@ int run(bool host, bool resume, uint16_t port, const char* ticket_path) {
         if (host && !session.round() && session.host()->members().size() == 2) {
             check(session.start(now) && session.world().spawn(1, 1, {int32_t(7)}) == 1, "Cannot start");
         }
+        // Direct can deliver the snapshot before the host receives the guest's authority model and state ACK.
+        if (host && session.round() && !claim_ready && session.writers().supports(2, 1)) {
+            const auto& members = session.host()->members();
+            const auto guest = members.find(2);
+            if (guest != members.end() && session.authority().known(guest->second.peer, 1)) {
+                std::ofstream marker(claim_file);
+                check(bool(marker), "Cannot signal claim readiness");
+                claim_ready = true;
+            }
+        }
         Values current;
         const bool readable = game.read(1, false, current);
         if (!host && session.round() && session.local() == 2 && readable) {
-            if (!resume && !requested && current == Values{int32_t(7)}) requested = session.writers().request(1);
+            if (!resume && !requested && current == Values{int32_t(7)} && std::filesystem::is_regular_file(claim_file))
+                requested = session.writers().request(1);
             if (!resume && session.writers().writer(1) == 2 && current != Values{int32_t(42)})
                 check(game.submit(1, {int32_t(42)}), "Cannot submit held field");
             if (!sent && current == Values{int32_t(42)})
@@ -142,9 +188,10 @@ int run(bool host, bool resume, uint16_t port, const char* ticket_path) {
 }
 
 int main(int argc, char** argv) try {
-    check(argc == 4, "Usage: compat_probe host|join|resume port ticket");
+    check(argc == 4 || argc == 5, "Usage: compat_probe host|join|resume port ticket [direct_module]");
     const std::string_view role(argv[1]);
-    return run(role == "host", role == "resume", static_cast<uint16_t>(std::stoul(argv[2])), argv[3]);
+    return run(role == "host", role == "resume", static_cast<uint16_t>(std::stoul(argv[2])), argv[3],
+               argc == 5 ? argv[4] : nullptr);
 } catch (const std::exception& error) {
     std::cerr << "FAIL " << error.what() << '\n';
     return 1;

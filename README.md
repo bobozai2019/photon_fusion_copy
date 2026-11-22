@@ -17,7 +17,7 @@ Windows x64 本机已分别验收三种引擎的房主与客人。控制台覆�
 
 ### 新游戏使用纯 TCP
 
-安装对应的平台 SDK，使用下表的会话入口。房主传入本机监听地址，客人传入房主地址。同机双开可在两端使用 `127.0.0.1:29000`，通过 `host` 或 `options.host` 区分角色。省略 provider 参数即可装载 SDK 自带的 TCP 模块。当前候选及默认发布进度见[传输验收](task/transport-providers/执行状态.md)。
+安装对应的平台 SDK，使用下表的会话入口。房主传入本机监听地址，客人传入房主地址。同机双开可在两端使用 `127.0.0.1:29000`，通过 `host` 或 `options.host` 区分角色。省略 provider 参数即可装载 SDK 自带的 TCP 模块。Windows x64 Release 已通过三端消费和 15 格 TCP 性能签收。[传输验收](task/transport-providers/执行状态.md)
 
 | 平台 | 默认 TCP 会话入口 |
 | --- | --- |
