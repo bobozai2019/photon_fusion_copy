@@ -152,9 +152,6 @@ def tcp_clients(api):
             wait([host, b], lambda: len(b.events) == 3, budget=1)
             assert [event[3] for event in b.events[1:]] == [b"", b"for b"]
             assert len(host.events) == 2
-            a.poll()
-            host.poll()
-            assert len(host.events) == 2 and a.stats(a_peer)[CONTROL].queued == MAX_CONTROL
             wait([host, a], lambda: len(host.events) == 3, budget=1)
             assert host.events[-1] == (MESSAGE, host_a, CONTROL, first, 0)
             assert a.send(a_peer, CONTROL, second) == (OK, 1)
@@ -175,6 +172,26 @@ def tcp_clients(api):
 
 def frame(lane, content):
     return struct.pack("!BH", lane, len(content)) + content
+
+
+def tcp_poll_burst(api):
+    with endpoint() as (address, text), Instance(api, LISTEN, text) as host:
+        with socket.create_connection(address, timeout=3) as raw:
+            wait([host], lambda: len(host.events) == 1)
+            peer = host.events[0][1]
+            frames = tuple(bytes([i]) * 8192 for i in range(6))
+            assert host.send(peer, CONTROL, *frames) == (OK, len(frames))
+            host.poll()
+            sent = host.stats(peer)[CONTROL]
+            assert sent.sent == 49152 and sent.queued == 0
+            expected = b"".join(frame(CONTROL, payload) for payload in frames)
+            received = bytearray()
+            while len(received) < len(expected):
+                packet = raw.recv(len(expected) - len(received))
+                assert packet
+                received.extend(packet)
+            assert received == expected
+    print("TCP: one poll drains a 48 KiB send burst with intact frames")
 
 
 def tcp_raw(api):
@@ -231,6 +248,7 @@ def main(path):
     handle = PTR()
     assert api.open(c.byref(invalid), c.byref(handle)) == INVALID_CONFIG and not handle
     tcp_clients(api)
+    tcp_poll_burst(api)
     tcp_raw(api)
 
 

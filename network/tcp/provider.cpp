@@ -30,7 +30,8 @@
 
 namespace {
 constexpr size_t header_size = 3;
-constexpr size_t io_quantum = 32 * 1024;
+constexpr size_t read_chunk = 32 * 1024;
+constexpr size_t peer_io_budget = 128 * 1024;
 constexpr size_t max_peers = 64;
 constexpr size_t max_queued_frames = 4096;
 constexpr uint32_t default_queue = 512 * 1024;
@@ -282,7 +283,7 @@ struct nc_transport_instance {
     }
 
     void write_frames(Peer &peer) {
-        size_t budget = io_quantum;
+        size_t budget = peer_io_budget;
         while (budget && !peer.send_queue.empty()) {
             auto &frame = peer.send_queue.front();
             const int amount = static_cast<int>(std::min(budget, frame.wire.size() - frame.offset));
@@ -325,26 +326,32 @@ struct nc_transport_instance {
         }
     }
 
-    void read_frames(Peer &peer, Sink &sink, std::array<uint8_t, io_quantum> &scratch) {
+    void read_frames(Peer &peer, Sink &sink, std::array<uint8_t, read_chunk> &scratch) {
         deliver_frames(peer, sink);
-        if (peer.read_offset) {
-            peer.input.erase(peer.input.begin(), peer.input.begin() + peer.read_offset);
-            peer.read_offset = 0;
-        }
-        if (!sink.left || peer.ended) return;
-        const auto size = recv(peer.socket.fd, reinterpret_cast<char *>(scratch.data()), static_cast<int>(scratch.size()), 0);
-        if (size > 0) {
+        // Drain ready bytes without making a large ready snapshot wait for the next game tick.
+        for (size_t budget = peer_io_budget; budget && sink.left && !peer.ended;) {
+            if (peer.read_offset) {
+                peer.input.erase(peer.input.begin(), peer.input.begin() + peer.read_offset);
+                peer.read_offset = 0;
+            }
+            const int amount = static_cast<int>(std::min(budget, scratch.size()));
+            const auto size = recv(peer.socket.fd, reinterpret_cast<char *>(scratch.data()), amount, 0);
+            if (size == 0) {
+                finish(peer, peer.input.empty() ? NC_TRANSPORT_CLOSE_REMOTE : NC_TRANSPORT_CLOSE_PROTOCOL);
+                return;
+            }
+            if (size < 0) {
+                const int error = socket_error();
+                if (!would_block(error) && !interrupted(error)) finish(peer, NC_TRANSPORT_CLOSE_IO_ERROR);
+                return;
+            }
+            budget -= size;
             peer.input.insert(peer.input.end(), scratch.data(), scratch.data() + size);
             deliver_frames(peer, sink);
-        } else if (size == 0) {
-            finish(peer, peer.input.empty() ? NC_TRANSPORT_CLOSE_REMOTE : NC_TRANSPORT_CLOSE_PROTOCOL);
-        } else {
-            const int error = socket_error();
-            if (!would_block(error) && !interrupted(error)) finish(peer, NC_TRANSPORT_CLOSE_IO_ERROR);
         }
     }
 
-    void step(Peer &peer, Sink &sink, std::array<uint8_t, io_quantum> &scratch) {
+    void step(Peer &peer, Sink &sink, std::array<uint8_t, read_chunk> &scratch) {
         if (peer.connecting && !peer.ended) connect_step(peer);
         if (peer.ended || peer.connecting) return;
         if (!peer.opened) {
@@ -455,7 +462,7 @@ nc_transport_result NC_TRANSPORT_CALL poll_tcp(nc_transport_instance *instance, 
     try {
         if (instance->listener) instance->accept_peers();
         Sink sink{budget, receive, context};
-        std::array<uint8_t, io_quantum> scratch;
+        std::array<uint8_t, read_chunk> scratch;
         // Move visited peers to the tail so even a one-event budget progresses every connection.
         for (auto remaining = instance->peers.size(); remaining && sink.left; --remaining) {
             auto peer = instance->peers.begin();
