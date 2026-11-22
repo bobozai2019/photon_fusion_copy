@@ -4,6 +4,8 @@
 
 Godot 4 接入独立登记，沿用 Cocos2d-x 的 M0–M6 门槛。[Godot 接入计划](../task/godot-platform/总纲.md) · [Godot 执行状态](../task/godot-platform/执行状态.md)
 
+传输改造已固定 SDK 源码基线，并通过 Windows x64 C ABI、独立 Core 及旧新版 Direct 双向互通。三端消费和属性性能按各自关口登记。[传输改造方案](../task/transport-providers/改造方案.md) · [执行状态与复现入口](../task/transport-providers/执行状态.md)
+
 ## 当前活动项 · property-binding
 
 首个能力是房主 A 向同引擎客人 B 同步浮点字段 `net_input_x`。现有 Fusion Shared Authority 样例用于研究属性机制，运行原版探针时以该对象的实际权威端为 A。可直接复跑的入口是[两条离线基线命令](../research/fusion/probes/README.md)。场景输入和待验收结果见[单属性同步规格](specs/property-binding.md)。
