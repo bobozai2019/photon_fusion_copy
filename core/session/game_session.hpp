@@ -6,6 +6,7 @@
 #include "session/discovery.hpp"
 #include "state/snapshot_codec.hpp"
 #include "session/object_authority.hpp"
+#include "session/outbound.hpp"
 
 namespace netcode {
 
@@ -25,6 +26,7 @@ struct SessionOptions {
 class GameSession {
   public:
     GameSession(Transport& link, SessionOptions options, Schemas schemas = {});
+    GameSession(Outbound& link, SessionOptions options, Schemas schemas = {});
     GameSession(const GameSession&) = delete;
     GameSession& operator=(const GameSession&) = delete;
     bool advertise(std::unique_ptr<RoomDirectory> directory, RoomListing listing);
@@ -58,10 +60,12 @@ class GameSession {
         return true;
     }
     const NetworkClock& clock() const { return clock_; }
+    Traffic traffic() const { return link_.traffic(); }
     std::function<void(const AppliedSnapshot&)> on_snapshot;
     std::function<void(const ObjectGrant&)> on_grant;
 
   private:
+    GameSession(std::unique_ptr<Outbound> owned, Outbound* link, SessionOptions options, Schemas schemas);
     friend class CheckpointCodec;
     void expire_members(TimePoint now);
     std::uint32_t term_ = 1;
@@ -74,7 +78,8 @@ class GameSession {
     void reset(TimePoint now);
     void apply(const AppliedSnapshot& snapshot);
     void ready(Peer peer);
-    Transport& link_;
+    std::unique_ptr<Outbound> owned_outbound_;
+    Outbound& link_;
     SessionOptions options_;
     std::unique_ptr<RoomDirectory> directory_;
     RoomListing listing_;

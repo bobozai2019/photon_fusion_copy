@@ -5,7 +5,11 @@ namespace netcode {
 enum class MigrationPhase { Running, Voting, Fenced, Ended, Retiring };
 struct StandbyEndpoint {
     std::string address;
-    uint16_t port;
+    uint16_t port = 0;
+    std::string provider_endpoint;
+    bool valid() const {
+        return provider_endpoint.empty() ? !address.empty() && port != 0 : address.empty() && port == 0;
+    }
 };
 struct MigrationOptions {
     // Only explicitly trusted players receive the private coordinator checkpoint.
@@ -29,7 +33,7 @@ class MigratingSession {
     Tick saved_tick() const { return saved_tick_; }
 
   private:
-    std::unique_ptr<GameSession> make(Transport& link, const SessionOptions& options);
+    std::unique_ptr<GameSession> make(Outbound& link, const SessionOptions& options);
     bool protocol(const Event& e, TimePoint now);
     void coordinator(TimePoint now);
     void publish_image();
@@ -42,7 +46,7 @@ class MigratingSession {
     void retire(TimePoint now);
     void reset_election();
     void fence();
-    std::unique_ptr<Transport> primary_, backup_, draining_;
+    std::unique_ptr<Outbound> primary_, backup_, draining_;
     TimePoint drain_deadline_{};
     SessionOptions options_;
     Schemas schemas_;

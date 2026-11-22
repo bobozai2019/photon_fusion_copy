@@ -15,13 +15,13 @@ bool is_migration(const Event &e) {
 } // namespace
 MigratingSession::MigratingSession(std::unique_ptr<Transport> link, SessionOptions options, Schemas schemas,
                                    MigrationOptions migration, Open open, Configure configure)
-    : primary_(std::move(link)), options_(options), schemas_(std::move(schemas)),
+    : primary_(std::make_unique<Outbound>(std::move(link))), options_(options), schemas_(std::move(schemas)),
       policy_(std::move(migration)), open_(std::move(open)), configure_(std::move(configure)) {
-    if (!primary_ || (!policy_.standbys.empty() && !open_) || policy_.lease < 300ms || policy_.lease > 10s)
+    if ((!policy_.standbys.empty() && !open_) || policy_.lease < 300ms || policy_.lease > 10s)
         throw std::invalid_argument("Invalid migration configuration");
     game_ = make(*primary_, options_);
 }
-std::unique_ptr<GameSession> MigratingSession::make(Transport &link, const SessionOptions &opts) {
+std::unique_ptr<GameSession> MigratingSession::make(Outbound &link, const SessionOptions &opts) {
     auto g = std::make_unique<GameSession>(link, opts, schemas_);
     if (configure_)
         configure_(*g);
@@ -311,7 +311,8 @@ void MigratingSession::guest(TimePoint now) {
             return;
         next_join_ = now + 500ms;
         try {
-            backup_ = open_(true, policy_.standbys.at(id));
+            if (auto link = open_(true, policy_.standbys.at(id)))
+                backup_ = std::make_unique<Outbound>(std::move(link));
         } catch (const std::exception &) {
             return;
         }
@@ -396,7 +397,8 @@ void MigratingSession::standby(TimePoint now) {
             return;
         next_join_ = now + 300ms;
         try {
-            backup_ = open_(false, policy_.standbys.at(successor_));
+            if (auto link = open_(false, policy_.standbys.at(successor_)))
+                backup_ = std::make_unique<Outbound>(std::move(link));
         } catch (const std::exception &) {
             return;
         }
@@ -458,10 +460,11 @@ void MigratingSession::standby(TimePoint now) {
         promote(now);
 }
 bool MigratingSession::add_standby(PlayerId player, StandbyEndpoint endpoint) {
-    if (!open_ || !active() || game_->round() || !player || endpoint.address.empty() || !endpoint.port)
+    if (!open_ || !active() || game_->round() || !player || !endpoint.valid())
         return false;
     for (const auto& [id, existing] : policy_.standbys)
-        if (existing.address == endpoint.address && existing.port == endpoint.port) return false;
+        if (existing.address == endpoint.address && existing.port == endpoint.port &&
+            existing.provider_endpoint == endpoint.provider_endpoint) return false;
     return policy_.standbys.emplace(player,std::move(endpoint)).second;
 }
 void MigratingSession::pump(TimePoint now) {

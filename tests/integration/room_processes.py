@@ -16,11 +16,12 @@ def expect_line(lines, expected):
             return
 
 
-def run(executable, port, mode):
+def run(executable, port, mode, guest_executable=None):
     with ExitStack() as stack:
         def launch(role, expectation):
+            binary = guest_executable if role == "guest" and guest_executable else executable
             process = stack.enter_context(subprocess.Popen(
-                [executable, role, str(port), expectation], stdout=subprocess.PIPE,
+                [binary, role, str(port), expectation], stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             ))
 
@@ -57,7 +58,8 @@ def run(executable, port, mode):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("exe")
+    parser.add_argument("--guest-exe")
     parser.add_argument("--port", type=int, default=43216)
     args = parser.parse_args()
-    run(args.exe, args.port, "rounds")
-    run(args.exe, args.port + 1, "timeout")
+    run(args.exe, args.port, "rounds", args.guest_exe)
+    run(args.exe, args.port + 1, "timeout", args.guest_exe)

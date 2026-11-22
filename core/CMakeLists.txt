@@ -21,6 +21,7 @@ add_library(netcode_core STATIC
     session/ownership_requests.cpp
     session/network_clock.cpp
     session/game_session.cpp
+    session/outbound.cpp
     session/world.cpp
     session/script_game.cpp
     session/model_prediction.cpp
@@ -42,7 +43,7 @@ if(NETCODE_DIRECT AND (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
     endif()
 endif()
 if(NETCODE_TRANSPORT_HOST)
-    add_library(netcode_transport_host STATIC "${network}/host/provider.cpp")
+    add_library(netcode_transport_host STATIC "${network}/host/provider.cpp" "${network}/host/game.cpp")
     target_include_directories(netcode_transport_host
         PUBLIC "$<BUILD_INTERFACE:${network}>" "$<BUILD_INTERFACE:${network}/api/netcode>")
     target_link_libraries(netcode_transport_host PUBLIC netcode_core PRIVATE ${CMAKE_DL_LIBS})
@@ -82,7 +83,7 @@ if(TARGET netcode_steam)
 endif()
 if(TARGET netcode_transport_host)
     list(APPEND core_targets netcode_transport_host)
-    install(FILES "${network}/host/provider.hpp" DESTINATION include/netcode/host)
+    install(FILES "${network}/host/provider.hpp" "${network}/host/game.hpp" DESTINATION include/netcode/host)
 endif()
 set_target_properties(${core_targets} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 install(TARGETS ${core_targets} EXPORT NetcodeCoreTargets ARCHIVE DESTINATION lib)

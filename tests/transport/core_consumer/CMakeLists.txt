@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.21)
+project(TransportCoreConsumer LANGUAGES CXX)
+find_package(NetcodeCore 0.1.0 EXACT CONFIG REQUIRED)
+enable_testing()
+add_executable(core_consumer main.cpp)
+target_link_libraries(core_consumer PRIVATE Netcode::Core)
+add_test(NAME independent_core_and_outbound COMMAND core_consumer)

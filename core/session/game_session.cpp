@@ -5,9 +5,16 @@
 namespace netcode {
 
 GameSession::GameSession(Transport& link, SessionOptions options, Schemas schemas)
-    : link_(link), options_(options), schemas_(std::move(schemas)), state_(schemas_), replica_(schemas_),
+    : GameSession(std::make_unique<Outbound>(link), nullptr, options, std::move(schemas)) {}
+
+GameSession::GameSession(Outbound& link, SessionOptions options, Schemas schemas)
+    : GameSession({}, &link, options, std::move(schemas)) {}
+
+GameSession::GameSession(std::unique_ptr<Outbound> owned, Outbound* link, SessionOptions options, Schemas schemas)
+    : owned_outbound_(std::move(owned)), link_(link ? *link : *owned_outbound_),
+      options_(options), schemas_(std::move(schemas)), state_(schemas_), replica_(schemas_),
       writers_(
-          link, schemas_, [this](ObjectId id) { return object(id); },
+          link_, schemas_, [this](ObjectId id) { return object(id); },
           [this](ObjectId id, const Values& values, Tick now) { return state_.capture(id, values, now); },
           [this](const ObjectGrant& grant) {
               if (on_grant)
@@ -18,9 +25,9 @@ GameSession::GameSession(Transport& link, SessionOptions options, Schemas schema
               const auto* meta = world_.identity(id);
               return meta ? meta->mode : std::nullopt;
           }),
-      world_(*this, link), prediction_(*this, link),
+      world_(*this, link_), prediction_(*this, link_),
       rpc_(
-          link, options.host,
+          link_, options.host,
           [this](ObjectId id) -> std::optional<PlayerId> {
               auto o = object(id);
               return o ? std::optional{o->owner} : std::nullopt;
@@ -41,9 +48,9 @@ GameSession::GameSession(Transport& link, SessionOptions options, Schemas schema
     if (options.step.count() <= 0 || options.step.count() > UINT32_MAX)
         throw std::invalid_argument("Session step must be positive");
     if (options.host)
-        host_.emplace(link, options.room, options.admission);
+        host_.emplace(link_, options.room, options.admission);
     else
-        guest_.emplace(link, options.room, options.resume, options.spectator, options.extended_join,
+        guest_.emplace(link_, options.room, options.resume, options.spectator, options.extended_join,
                        options.admission.coordinator);
 }
 
@@ -122,6 +129,7 @@ bool GameSession::start(TimePoint now) {
 void GameSession::end(TimePoint now) {
     if (host_) {
         host_->end_room();
+        link_.poll(now);
         reset(now);
     }
 }
@@ -304,18 +312,18 @@ void GameSession::flush(TimePoint now) {
     if (tick_ == sent_tick_)
         return;
     sent_tick_ = tick_;
+    Outbound::Collect collect(link_);
     prediction_.flush();
     if (host_) {
         for (const auto& [player, member] : host_->members()) {
             if (!member.peer)
                 continue;
             auto codec = codecs_.find(member.peer);
-            for (const auto& packet : state_.packets(member.peer, room(), round(), tick_)) {
-                if (codec == codecs_.end())
-                    link_.send(member.peer, Lane::Game, packet);
-                else
-                    link_.send(member.peer, Lane::Game, codec->second.encode(packet, room(), round()));
-            }
+            auto packets = state_.packets(member.peer, room(), round(), tick_);
+            if (codec != codecs_.end())
+                for (auto& packet : packets)
+                    packet = codec->second.encode(packet, room(), round());
+            link_.send_messages(member.peer, Lane::Game, std::move(packets));
             ready(member.peer);
         }
     } else if (clock_.probe_due(now)) {
@@ -332,6 +340,7 @@ void GameSession::flush(TimePoint now) {
     writers_.flush(tick_);
     world_.flush();
     rpc_.update(now);
+    link_.flush(now);
 }
 void GameSession::pump(TimePoint now) {
     for (const auto& e : link_.poll(now))
