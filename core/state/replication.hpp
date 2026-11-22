@@ -77,7 +77,7 @@ public:
     ObjectId next_id() const { return highest_id_ == UINT32_MAX ? 0 : highest_id_ + 1; }
     bool baseline_complete(Peer peer) const;
     bool known(Peer peer, ObjectId id) const;
-    std::vector<Bytes> packets(Peer peer, RoomId room, RoundId round, Tick send_tick);
+    std::vector<Bytes> packets(Peer peer, RoomId room, RoundId round, Tick send_tick, Tick retry_ticks = 0);
     bool acknowledge(Peer peer, Reader& payload);
 
 private:

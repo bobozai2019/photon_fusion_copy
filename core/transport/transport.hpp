@@ -55,6 +55,7 @@ public:
         return {accepted == count ? SendStatus::Accepted : SendStatus::Blocked, accepted};
     }
     virtual bool supports_backpressure() const { return false; }
+    virtual bool reliable_ordered(Lane) const { return false; }
     virtual void close(Peer peer) = 0;
     virtual Traffic traffic() const = 0;
 };

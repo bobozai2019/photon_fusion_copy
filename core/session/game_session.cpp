@@ -315,11 +315,16 @@ void GameSession::flush(TimePoint now) {
     Outbound::Collect collect(link_);
     prediction_.flush();
     if (host_) {
+        // A reliable lane already retries delivery. Keep a slower application retry for snapshots
+        // that could not be queued locally, and continue offering every new revision immediately.
+        constexpr auto retry_window = std::chrono::milliseconds(200);
+        const auto retry_ticks = link_.reliable_ordered(Lane::Game)
+            ? static_cast<Tick>((retry_window - std::chrono::milliseconds(1)) / options_.step + 1) : 0;
         for (const auto& [player, member] : host_->members()) {
             if (!member.peer)
                 continue;
             auto codec = codecs_.find(member.peer);
-            auto packets = state_.packets(member.peer, room(), round(), tick_);
+            auto packets = state_.packets(member.peer, room(), round(), tick_, retry_ticks);
             if (codec != codecs_.end())
                 for (auto& packet : packets)
                     packet = codec->second.encode(packet, room(), round());

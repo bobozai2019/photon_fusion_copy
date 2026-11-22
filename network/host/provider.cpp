@@ -112,6 +112,9 @@ public:
     }
 
     bool supports_backpressure() const override { return true; }
+    bool reliable_ordered(Lane lane) const override {
+        return (caps_.lane[lane_id(lane)].flags & NC_TRANSPORT_RELIABLE_ORDERED) != 0;
+    }
 
     void close(Peer peer) override { api_.close_peer(instance_.get(), peer); }
 

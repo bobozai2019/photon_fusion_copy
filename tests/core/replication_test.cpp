@@ -112,6 +112,17 @@ int main()
     check(applied() == 1 && b.objects().empty(), "Tombstone did not invalidate instance");
     acknowledge();
     check(a.active().empty() && a.packets(to_guest, room, round, 11).empty(), "Tombstone not retired");
+
+    AuthorityState paced(schemas);
+    check(paced.create(1, 1, 2, {0.0f, 3.0f, false}, 1), "Create paced snapshot");
+    paced.attach(to_guest);
+    constexpr Tick retry_ticks = 7;
+    check(!paced.packets(to_guest, room, round, 1, retry_ticks).empty(), "First paced snapshot missing");
+    check(paced.packets(to_guest, room, round, 2, retry_ticks).empty(), "Repeated paced snapshot too early");
+    check(paced.capture(1, source, 3), "Capture fresh revision for reliable lane");
+    check(!paced.packets(to_guest, room, round, 3, retry_ticks).empty(), "Fresh revision waited for retry");
+    check(paced.packets(to_guest, room, round, 9, retry_ticks).empty(), "Retry window ended early");
+    check(!paced.packets(to_guest, room, round, 10, retry_ticks).empty(), "Unacked snapshot was lost");
     std::cout << "0 -> 0.75 observed at capture tick 2 -> -0.5 applied from capture tick 4"
                  " after drop at send tick 6 and retry at 7; duplicate, reorder and deletion verified\n";
 }

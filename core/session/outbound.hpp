@@ -17,6 +17,7 @@ public:
     void close(Peer peer) override;
     std::vector<Event> poll(TimePoint now) override;
     Traffic traffic() const override;
+    bool reliable_ordered(Lane lane) const override { return link_.reliable_ordered(lane); }
     void flush(TimePoint now);
 
     // The fixed step can collect multiple submissions before the next flush.

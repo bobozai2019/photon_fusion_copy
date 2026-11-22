@@ -317,7 +317,7 @@ bool AuthorityState::baseline_complete(Peer peer) const
     });
 }
 
-std::vector<Bytes> AuthorityState::packets(Peer peer, RoomId room, RoundId round, Tick send_tick)
+std::vector<Bytes> AuthorityState::packets(Peer peer, RoomId room, RoundId round, Tick send_tick, Tick retry_ticks)
 {
     auto& progress = peers_.at(peer);
     std::vector<Bytes> result;
@@ -339,6 +339,8 @@ std::vector<Bytes> AuthorityState::packets(Peer peer, RoomId room, RoundId round
         const Tick revision = hide ? progress.hidden.at(id) : object.revision;
         if (ack >= revision || (hide && !progress.sent.count(id)) ||
             (entry.removed && !progress.sent.count(id) && !progress.baseline.count(id))) continue;
+        if (retry_ticks && progress_at(progress.sent, id) == revision &&
+            send_tick - progress_at(progress.last_sent_tick, id) < retry_ticks) continue;
         if (!entry.removed && !hide && !std::all_of(object.dependencies.begin(), object.dependencies.end(),
                 [&](ObjectId dep) { return known(peer, dep); })) continue;
         Writer record;
