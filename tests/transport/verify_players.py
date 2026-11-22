@@ -103,6 +103,26 @@ def export_unity(args, work):
     return player, expected, plugins / "netcode_unity.dll", plugins / TCP_NAME
 
 
+def build_cocos(args, work):
+    sdk = work / "relocated SDK"
+    for product in ("core", "cocos"):
+        with ZipFile(archive(args.packages, product)) as package:
+            package.extractall(sdk / product)
+    source = work / "consumer"
+    shutil.copytree(FIXTURES / "cocos", source)
+    shutil.copy2(FIXTURES / "consumer.cfg", source)
+    build = work / "build"
+    subprocess.run([args.cmake, "-S", source, "-B", build, "-G", "Visual Studio 18 2026", "-A", "x64",
+                    "-DCMAKE_CONFIGURATION_TYPES=Release", "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
+                    f"-DNETCODE_HOST_TARGETS={args.cocos_host_targets.resolve()}",
+                    f"-DNetcodeCore_DIR={sdk / 'core/lib/cmake/NetcodeCore'}",
+                    f"-DNetcodeCocos_DIR={sdk / 'cocos/lib/cmake/NetcodeCocos'}"], check=True)
+    subprocess.run([args.cmake, "--build", build, "--config", "Release"], check=True)
+    player = build / "Release/Consumer.exe"
+    expected = (player.parent / "sdk-build-id.txt").read_text().strip()
+    return player, expected, player, player.parent / TCP_NAME
+
+
 def stop(process):
     if process.poll() is None:
         process.terminate()
@@ -191,18 +211,19 @@ def main():
     parser.add_argument("--bad-abi", type=Path)
     parser.add_argument("--godot", type=Path)
     parser.add_argument("--unity", type=Path)
-    parser.add_argument("--cocos-player", type=Path)
+    parser.add_argument("--cmake", type=Path)
+    parser.add_argument("--cocos-host-targets", type=Path)
     args = parser.parse_args()
+    if args.engine == "godot" and not args.godot:
+        parser.error("Godot requires --godot")
+    if args.engine == "unity" and not args.unity:
+        parser.error("Unity requires --unity")
+    if args.engine == "cocos" and not (args.cmake and args.cocos_host_targets):
+        parser.error("Cocos requires --cmake and --cocos-host-targets")
     args.work = args.work.resolve()
     args.work.mkdir(parents=True, exist_ok=False)
-    if args.engine == "cocos":
-        player = args.cocos_player.resolve()
-        expected = (player.parent / "sdk-build-id.txt").read_text().strip()
-        platform = player
-        tcp = player.parent / TCP_NAME
-    else:
-        export = export_godot if args.engine == "godot" else export_unity
-        player, expected, platform, tcp = export(args, args.work)
+    build = {"godot": export_godot, "unity": export_unity, "cocos": build_cocos}[args.engine]
+    player, expected, platform, tcp = build(args, args.work)
     print(f"PROVIDER_SHA tcp={digest(tcp)} example-pipe={digest(args.external_dll)}", flush=True)
     a = verify_run(args, args.work, player, platform, expected, "tcp")
     b = verify_run(args, args.work, player, platform, expected, "example-pipe", args.external_dll.resolve())
