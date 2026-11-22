@@ -19,11 +19,16 @@ func _ready() -> void:
     resuming = "--resume" in args
     ticket_path = argument(args, "--ticket")
     var layout := FileAccess.get_file_as_string("res://consumer.cfg")
-    var provider := argument(args, "--provider", "tcp")
+    var provider := argument(args, "--provider")
     var path := argument(args, "--module")
     var ticket := FileAccess.get_file_as_bytes(ticket_path) if resuming else PackedByteArray()
-    var error := game.open_with_provider(layout, host, argument(args, "--endpoint"), 2, false, provider, path,
-        PackedByteArray(), ticket)
+    var endpoint := argument(args, "--endpoint")
+    var error: String
+    if provider.is_empty() and path.is_empty() and ticket.is_empty():
+        error = game.open_with_provider(layout, host, endpoint, 2, false)
+    else:
+        error = game.open_with_provider(layout, host, endpoint, 2, false,
+            "tcp" if provider.is_empty() else provider, path, PackedByteArray(), ticket)
     if "--expect-error" in args:
         if not error.contains(argument(args, "--expect-error")):
             fail("Unexpected open result: " + error)

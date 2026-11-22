@@ -1,0 +1,161 @@
+--- a/core/transport/transport.hpp
++++ b/core/transport/transport.hpp
+@@ -34,6 +34,8 @@
+     std::uint64_t udp_dropped = 0;
+     std::uint64_t udp_duplicated = 0, udp_reordered = 0;
+     std::size_t queued_bytes = 0, peak_queued_bytes = 0;
++    std::size_t queued_payload = 0, peak_queued_payload = 0;
++    std::uint64_t oldest_queued_us = 0;
+ };
+
+ class Transport {
+--- a/core/transport/direct.cpp
++++ b/core/transport/direct.cpp
+@@ -82,14 +82,20 @@
+     return a.sin_addr.s_addr == b.sin_addr.s_addr && a.sin_port == b.sin_port;
+ }
+
++struct QueuedFrame {
++    Bytes bytes;
++    TimePoint queued_at;
++    std::size_t payload;
++};
++
+ struct Connection {
+     Socket tcp;
+     sockaddr_in tcp_address{};
+     sockaddr_in udp_address{};
+     TimePoint created = Clock::now(), received = created, next_heartbeat{};
+     Bytes cookie, incoming;
+-    std::deque<Bytes> outgoing;
+-    std::size_t offset = 0, queued = 0;
++    std::deque<QueuedFrame> outgoing;
++    std::size_t offset = 0, queued = 0, queued_payload = 0;
+     bool connecting = false, open = false, closing = false;
+ };
+
+@@ -121,6 +127,7 @@
+
+     std::vector<Event> poll(TimePoint now) override
+     {
++        last_poll_ = now;
+         std::vector<Event> events;
+         if (server_) accept_clients(now);
+         for (auto it = peers_.begin(); it != peers_.end();) {
+@@ -131,6 +138,7 @@
+                 continue;
+             }
+             traffic_.queued_bytes -= link.queued;
++            traffic_.queued_payload -= link.queued_payload;
+             events.push_back({EventType::Closed, peer, Lane::Control, {}, reason});
+             it = peers_.erase(it);
+         }
+@@ -156,7 +164,19 @@
+         if (const auto it = peers_.find(peer); it != peers_.end()) it->second.closing = true;
+     }
+
+-    Traffic traffic() const override { return traffic_; }
++    Traffic traffic() const override {
++        auto result = traffic_;
++        for (const auto& [peer, link] : peers_) {
++            for (const auto& frame : link.outgoing) {
++                if (!frame.payload) continue;
++                const auto age = std::chrono::duration_cast<std::chrono::microseconds>(last_poll_ - frame.queued_at);
++                if (age.count() > 0)
++                    result.oldest_queued_us = std::max(result.oldest_queued_us, static_cast<uint64_t>(age.count()));
++                break;
++            }
++        }
++        return result;
++    }
+
+ private:
+     void accept_clients(TimePoint now)
+@@ -185,7 +205,11 @@
+         writer.u32(static_cast<std::uint32_t>(payload.size() + 1));
+         writer.u8(static_cast<std::uint8_t>(frame));
+         writer.append(payload);
+-        link.outgoing.push_back(writer.take());
++        const auto business_bytes = frame == Frame::Message ? payload.size() : 0;
++        link.outgoing.push_back({writer.take(), last_poll_, business_bytes});
++        link.queued_payload += business_bytes;
++        traffic_.queued_payload += business_bytes;
++        traffic_.peak_queued_payload = std::max(traffic_.peak_queued_payload, traffic_.queued_payload);
+         link.queued += size;
+         traffic_.queued_bytes += size;
+         traffic_.peak_queued_bytes = std::max(traffic_.peak_queued_bytes, traffic_.queued_bytes);
+@@ -195,7 +219,8 @@
+     Disconnect write_control(Connection& link)
+     {
+         while (!link.outgoing.empty()) {
+-            const Bytes& data = link.outgoing.front();
++            const auto& frame = link.outgoing.front();
++            const Bytes& data = frame.bytes;
+             const auto count = ::send(link.tcp, reinterpret_cast<const char*>(data.data() + link.offset),
+                                       static_cast<int>(data.size() - link.offset), send_flags);
+             if (count < 0) {
+@@ -207,6 +232,8 @@
+             traffic_.tcp_sent += count;
+             link.offset += count;
+             if (link.offset == data.size()) {
++                link.queued_payload -= frame.payload;
++                traffic_.queued_payload -= frame.payload;
+                 link.outgoing.pop_front();
+                 link.offset = 0;
+             }
+@@ -375,6 +402,7 @@
+     bool server_;
+     Peer next_peer_ = 1;
+     std::map<Peer, Connection> peers_;
++    TimePoint last_poll_{};
+     Traffic traffic_;
+ };
+
+--- a/core/session/game_session.hpp
++++ b/core/session/game_session.hpp
+@@ -58,6 +58,7 @@
+         return true;
+     }
+     const NetworkClock& clock() const { return clock_; }
++    Traffic traffic() const { return link_.traffic(); }
+     std::function<void(const AppliedSnapshot&)> on_snapshot;
+     std::function<void(const ObjectGrant&)> on_grant;
+
+--- a/engineplatform/godot/game.hpp
++++ b/engineplatform/godot/game.hpp
+@@ -15,6 +15,7 @@
+                        int capacity, bool watch);
+     bool model(int schema, const godot::PackedInt32Array &fields, int policy, int cooldown);
+     godot::Dictionary advance();
++    godot::Dictionary transport_stats();
+     godot::Dictionary routing_info(int64_t object, bool audience);
+     bool bind_array_method(const godot::String&,int,int,int,bool,const godot::Callable&);
+
+--- a/engineplatform/godot/game.cpp
++++ b/engineplatform/godot/game.cpp
+@@ -172,6 +172,7 @@
+     ClassDB::bind_method(D_METHOD("predict", "object", "input"), &NetcodeGame::predict);
+     ClassDB::bind_method(D_METHOD("predicted_fields", "object"), &NetcodeGame::predicted_fields);
+     ClassDB::bind_method(D_METHOD("advance"), &NetcodeGame::advance);
++    ClassDB::bind_method(D_METHOD("transport_stats"), &NetcodeGame::transport_stats);
+     ClassDB::bind_method(D_METHOD("add_standby","player","address","port"),&NetcodeGame::add_standby);
+     ClassDB::bind_method(D_METHOD("handoff"),&NetcodeGame::handoff);
+     ClassDB::bind_method(D_METHOD("migration_phase"),&NetcodeGame::migration_phase);
+@@ -245,6 +246,17 @@
+             writable_[schema].push_back(field);
+     return true;
+ }
++Dictionary NetcodeGame::transport_stats() {
++    Dictionary result;
++    if (!available()) return result;
++    const auto stats = game_->session().traffic();
++    result["queued_bytes"] = static_cast<int64_t>(stats.queued_payload);
++    result["provider_peak_queued_bytes"] = static_cast<int64_t>(stats.peak_queued_payload);
++    result["core_peak_queued_bytes"] = 0;
++    result["oldest_queued_us"] = static_cast<int64_t>(stats.oldest_queued_us);
++    return result;
++}
++
+ Dictionary NetcodeGame::advance() {
+     Dictionary frame;
+     if (!game_ || stepping_)

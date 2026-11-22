@@ -40,10 +40,19 @@ public:
             options.resume = decode_resume_ticket(bytes.data(), bytes.size());
         }
         const ReplicationLayout layout(exe_ / "consumer.cfg");
-        const ProviderConfig transport{arg("--provider", "tcp"), std::filesystem::u8path(arg("--module")), {}};
+        const auto endpoint = arg("--endpoint");
+        const auto provider = arg("--provider");
+        const auto module = arg("--module");
         const auto expected = arg("--expect-error");
         try {
-            component_ = GameComponent::create_with_provider(arg("--endpoint"), options, layout, transport);
+            if (provider.empty() && module.empty()) {
+                component_ = GameComponent::create_with_provider(endpoint, options, layout);
+            } else {
+                ProviderConfig transport;
+                if (!provider.empty()) transport.id = provider;
+                transport.module = std::filesystem::u8path(module);
+                component_ = GameComponent::create_with_provider(endpoint, options, layout, transport);
+            }
         } catch (const std::exception& error) {
             if (expected.empty() || std::string_view(error.what()).find(expected) == std::string_view::npos)
                 throw;

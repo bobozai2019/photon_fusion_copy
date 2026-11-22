@@ -64,6 +64,49 @@ void test_outbound() {
     std::cout << "Batch trace peer=4 Game[02 09][04 05][06 07] Control[0b], partial 1/3, drained before close\n";
 }
 
+void test_memory_contract() {
+    MemoryTransport a, b;
+    a.link(b);
+    const auto a_open = a.poll(TimePoint{});
+    const auto b_open = b.poll(TimePoint{});
+    check(a_open.size() == 1 && b_open.size() == 1 &&
+          a_open.front().type == EventType::Open && b_open.front().type == EventType::Open, "Memory open events");
+    const auto sender = a_open.front().peer;
+    const auto recipient = b_open.front().peer;
+
+    const Bytes first{0x00, 0xff}, second{0xa1}, game{0x1a, 0x00, 0x01}, empty;
+    auto input = first;
+    const Bytes* batch[]{&input, &empty, &second};
+    auto result = a.send_batch(sender, Lane::Control, batch, 3);
+    check(result.status == SendStatus::Blocked && result.accepted == 1, "Memory batch acceptance prefix");
+    input.assign(4, 0x55);
+    result = a.send_batch(sender, Lane::Control, batch + 2, 1);
+    check(result.status == SendStatus::Accepted && result.accepted == 1, "Memory retry suffix");
+    check(a.send(sender, Lane::Game, game), "Memory game submit");
+    a.close(sender);
+    check(!a.send(sender, Lane::Control, second), "Memory send after close");
+
+    const auto received = b.poll(TimePoint{});
+    check(received.size() == 4, "Memory receives three messages and close");
+    const auto message = [&](size_t i, Lane lane, const Bytes& expected) {
+        auto& e = received[i];
+        return e.type == EventType::Message && e.peer == recipient && e.lane == lane && e.payload == expected;
+    };
+    check(message(0, Lane::Control, first) && message(1, Lane::Control, second) &&
+          message(2, Lane::Game, game), "Memory message order and owned payloads");
+    const auto closed = a.poll(TimePoint{});
+    check(received.back().type == EventType::Closed && received.back().reason == Disconnect::Remote &&
+          closed.size() == 1 && closed[0].type == EventType::Closed && closed[0].reason == Disconnect::Local,
+          "Memory close reasons");
+    check(a.traffic().tcp_sent == 3 && b.traffic().tcp_received == 3 &&
+          a.traffic().udp_sent == 3 && b.traffic().udp_received == 3, "Memory business bytes");
+    a.link(b);
+    const auto reconnected = b.poll(TimePoint{});
+    check(reconnected.size() == 1 && reconnected[0].type == EventType::Open &&
+          reconnected[0].peer != recipient, "Memory reconnect peer");
+    std::cout << "Memory contract: Open, Control[00ff][a1], Game[1a0001], Remote Closed, new peer on reconnect\n";
+}
+
 void test_memory_session() {
     MemoryTransport a, b;
     a.link(b);
@@ -95,6 +138,7 @@ void test_memory_session() {
 
 int main() try {
     test_outbound();
+    test_memory_contract();
     test_memory_session();
 } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

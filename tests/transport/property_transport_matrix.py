@@ -60,7 +60,9 @@ def main():
     parser.add_argument("--godot-tools", type=Path, required=True)
     parser.add_argument("--godot", type=Path)
     parser.add_argument("--baseline", type=Path)
-    parser.add_argument("--candidate", type=Path, required=True)
+    parser.add_argument("--candidate", type=Path)
+    parser.add_argument("--variants", nargs="+", choices=("A", "B", "C"),
+                        help="Run only the specified variants. By default, run all variants with archives.")
     parser.add_argument("--direct-module", type=Path,
                         help="Direct ABI module for B (defaults to the standalone DLL beside the candidate archive when present)")
     parser.add_argument("--work", type=Path, required=True)
@@ -69,6 +71,11 @@ def main():
     parser.add_argument("--workloads", nargs="+", choices=("idle", "sparse", "dense"), default=("idle", "sparse", "dense"))
     parser.add_argument("--rooms", type=int, default=5)
     args = parser.parse_args()
+    selected = set(args.variants or (("A", "B", "C") if args.baseline else ("B", "C")))
+    if "A" in selected and not args.baseline:
+        parser.error("A requires --baseline")
+    if selected.intersection(("B", "C")) and not args.candidate:
+        parser.error("B and C require --candidate")
     work = args.work.resolve()
     if not work.is_relative_to(ROOT.resolve()) or args.rooms < 1:
         parser.error("Use a new --work directory under out/ and a positive room count")
@@ -77,13 +84,13 @@ def main():
     prop, runner = load_probe(args)
     width = 20
     direct_module = args.direct_module
-    if direct_module is None:
+    if direct_module is None and "B" in selected:
         sibling = args.candidate.with_name("netcode_transport_direct.dll")
         direct_module = sibling if sibling.is_file() else None
-    direct_digest = fingerprint(direct_module) if direct_module else None
-    variants = {"B": (args.candidate, "direct", direct_module), "C": (args.candidate, "tcp", None)}
-    if args.baseline:
-        variants = {"A": (args.baseline, "direct", None), **variants}
+    direct_digest = fingerprint(direct_module) if direct_module and "B" in selected else None
+    variants = {"A": (args.baseline, "direct", None), "B": (args.candidate, "direct", direct_module),
+                "C": (args.candidate, "tcp", None)}
+    variants = {name: setup for name, setup in variants.items() if name in selected}
 
     work.mkdir(parents=True, exist_ok=False)
     projects = {}

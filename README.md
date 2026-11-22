@@ -15,6 +15,18 @@ Godot 玩法可以直接使用原生 `@rpc` 注解，并在 Replicator 上选择
 
 Windows x64 本机已分别验收三种引擎的房主与客人。控制台覆盖八个实际字段、对象引用解析、二维与三维刚体，以及双向命名 RPC。车场另有写权交接、断线接回原车和四人百对象用例。[控制台验收](task/gameplay-components/验收/本机.md) · [车场验收](task/cross-engine-sync/验收/M6.md)
 
+### 新游戏使用纯 TCP
+
+安装对应的平台 SDK，使用下表的会话入口。房主传入本机监听地址，客人传入房主地址。同机双开可在两端使用 `127.0.0.1:29000`，通过 `host` 或 `options.host` 区分角色。省略 provider 参数即可装载 SDK 自带的 TCP 模块。当前候选及默认发布进度见[传输验收](task/transport-providers/执行状态.md)。
+
+| 平台 | 默认 TCP 会话入口 |
+| --- | --- |
+| Godot | `game.open_with_provider(layout_text, host, endpoint, 4, false)`，导出器会拷贝 TCP DLL |
+| Unity | `NetcodeGame.OpenWithProvider(layoutText, host, endpoint)`，UPM 包将 TCP DLL 安装为 Win64 原生插件 |
+| Cocos2d-x | `GameComponent::create_with_provider(endpoint, options, layout)`，将 SDK 的 `bin/netcode_transport_tcp.dll` 随宿主可执行文件部署 |
+
+要换用自有传输，使用 SDK 中的 `include/netcode/transport_provider.h` 编译 v1 DLL，再将 provider 标识和模块路径交给同一会话入口。房主和客人使用同款驱动。接回时使用相同配置，并传入原会话的接回凭证。[传输接口与配置](task/transport-providers/传输接口.md)
+
 ## 独立构建与外部接入
 
 Windows x64 首版为 0.1.0，使用 MSVC v145、C++17 和静态 CRT。Release 用 /MT，Debug 用 /MTd。Core、Godot、Cocos、Unity 各有独立 CMake 工程。平台以安装后的 Core 作为构建输入。运行 Godot 或 Unity 游戏只需相应平台插件。Cocos 宿主需要匹配的 Core SDK 和自己的 Cocos2d-x 4 引擎目标。
@@ -23,6 +35,7 @@ Windows x64 首版为 0.1.0，使用 MSVC v145、C++17 和静态 CRT。Release �
 
 ```powershell
 python -B tools/build.py core --package
+python -B tools/build.py transport-tcp --package
 python -B tools/build.py godot --core-prefix out/install/win-x64-msvc-mt/Release/core --package
 python -B tools/build.py cocos --core-prefix out/install/win-x64-msvc-mt/Release/core --package
 python -B tools/build.py unity --core-prefix out/install/win-x64-msvc-mt/Release/core --package
@@ -31,11 +44,12 @@ python -B tools/build.py unity --core-prefix out/install/win-x64-msvc-mt/Release
 | 产品 | 外部接入入口 | 发布包 |
 | --- | --- | --- |
 | Core | `find_package(NetcodeCore CONFIG REQUIRED)`，链接 `Netcode::Core` 或含直连的 `Netcode::Direct` | [Core ZIP](out/packages/core-win-x64/current/netcode-core-win-x64.zip) |
+| 纯 TCP | 独立 DLL 与 v1 C 头文件 | [传输 ZIP](out/packages/transport-tcp-win-x64/current/netcode-transport-tcp-win-x64.zip) |
 | Godot | 将 ZIP 解入项目，使用 `addons/netcode` 与 `NetcodeGame` | [Godot 插件](out/packages/godot-win-x64/current/netcode-godot-win-x64.zip) |
 | Cocos2d-x | 定义宿主 `cocos2d` 目标，指定 Core 和 Cocos 的安装前缀，`find_package(NetcodeCocos CONFIG REQUIRED)` 后链接 `Netcode::Cocos` | [Cocos ZIP](out/packages/cocos-win-x64/current/netcode-cocos-win-x64.zip) |
 | Unity | Package Manager 中选择从本地 tarball 添加，C# 组件位于 `Netcode` 命名空间 | [Unity UPM 包](out/packages/unity-win-x64/current/netcode-unity-win-x64.tgz) |
 
-默认使用匹配的 Windows x64 Release。可以使用 `--config Debug` 生成独立的调试 SDK。Godot 编译可用 `--godot-cpp` 指向已解压的 godot-cpp 4.5，省略时使用已校验的依赖归档。Cocos 编译可用 `--cocos-root` 指定引擎头文件树，`--physics2d`、`--physics3d` 与宿主开关一致。可选 Steam 传输通过 `core --steam-sdk <SDK路径>` 启用，使用该组件的外部工程另行提供 Steamworks。四个已验发布包为直连版本。
+默认使用匹配的 Windows x64 Release。可以使用 `--config Debug` 生成独立的调试 SDK。Godot 编译可用 `--godot-cpp` 指向已解压的 godot-cpp 4.5，省略时使用已校验的依赖归档。Cocos 编译可用 `--cocos-root` 指定引擎头文件树，`--physics2d`、`--physics3d` 与宿主开关一致。可选 Steam 传输通过 `core --steam-sdk <SDK路径>` 启用，使用该组件的外部工程另行提供 Steamworks。
 
 开发安装都在 `out/install/win-x64-msvc-mt/<配置>/<产品>/`。平台开发时运行 `python -B tools/build.py godot` 等命令即可联动 Core。已有 Core 或外部 Core 使用 `--core-prefix` 指向解压目录。原生构建树按产品隔离，`current/previous` 保留当前与上一发布包。同机多份 SDK 可通过平台的 build ID 与 Core build ID 识别。SDK 版本描述接口，CRT、位宽和配置决定二进制可用性，房间握手另行检查联网协议版本。
 

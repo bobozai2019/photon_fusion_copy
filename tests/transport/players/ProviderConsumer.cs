@@ -30,8 +30,13 @@ public sealed class ProviderConsumer : MonoBehaviour
         try {
             var layout = File.ReadAllText(Path.Combine(Application.streamingAssetsPath, "consumer.cfg"));
             var ticket = resuming ? File.ReadAllBytes(ticketPath) : null;
-            game = NetcodeGame.OpenWithProvider(layout, host, Argument(args, "--endpoint"), capacity: 2,
-                provider: Argument(args, "--provider", "tcp"), module: Argument(args, "--module"), resume: ticket);
+            var endpoint = Argument(args, "--endpoint");
+            var provider = Argument(args, "--provider");
+            var module = Argument(args, "--module");
+            game = provider.Length == 0
+                ? NetcodeGame.OpenWithProvider(layout, host, endpoint, capacity: 2, module: module, resume: ticket)
+                : NetcodeGame.OpenWithProvider(layout, host, endpoint, capacity: 2, provider: provider,
+                    module: module, resume: ticket);
             if (expected.Length != 0) throw new Exception("Expected open failure");
             if (!game.BindCallable("Proof", 71, 2, RpcDirection.Server, true, (Action<uint, uint, int>)Proof, room: true) ||
                 !game.BindCallable("Reply", 72, 2, RpcDirection.Client, true, (Action<uint, uint, int>)Reply, room: true))

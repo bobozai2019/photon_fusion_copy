@@ -24,6 +24,38 @@ def queue_high_water(rooms):
     return peaks or None
 
 
+def require_queue_metrics(metrics, key):
+    for role in ("owner", "remote"):
+        queue = metrics[f"{role}_maximum_queue"]
+        if any(not isinstance(queue.get(field), int) or queue[field] < 0 for field in QUEUE_METRICS):
+            raise ValueError(f"Missing or invalid {role} queue metrics in {key}")
+
+
+def attach_baseline_queues(result, records):
+    cells = defaultdict(list)
+    builds = set()
+    trials = set()
+    for record in records:
+        cell = record["fields"], record["workload"]
+        key = (*cell, record["trial"])
+        metrics = record["result"]
+        if (key in trials or record["variant"] != "A" or not metrics["correct"] or
+                any(metrics[f"{role}_transport"] != "direct" for role in ("owner", "remote"))):
+            raise ValueError(f"Invalid baseline queue run {key}")
+        require_queue_metrics(metrics, key)
+        trials.add(key)
+        builds.add(record["sdk_sha256"])
+        cells[cell].append({"metrics": metrics})
+    expected = {(cell["fields"], cell["workload"]) for cell in result["cells"]}
+    if len(builds) != 1 or result["builds"]["A"] in builds:
+        raise ValueError("Baseline queue runs require one separately instrumented SDK")
+    if cells.keys() != expected or any(len(rooms) < 5 for rooms in cells.values()):
+        raise ValueError("Baseline queue runs require five independent rooms in every cell")
+    result["A_queue_build"] = builds.pop()
+    for cell in result["cells"]:
+        cell["variants"]["A"]["queue_high_water"] = queue_high_water(cells[cell["fields"], cell["workload"]])
+
+
 def evaluate(native, reference, verdict, baseline_sha=None, direct_module_sha=None):
     rooms = defaultdict(lambda: defaultdict(list))
     builds = defaultdict(set)
@@ -55,10 +87,7 @@ def evaluate(native, reference, verdict, baseline_sha=None, direct_module_sha=No
                 raise ValueError(f"Unexpected providers in {key}: {owner!r}, {remote!r}")
             providers[variant].add(owner)
             if variant in ("B", "C"):
-                for role in ("owner", "remote"):
-                    queue = metrics[f"{role}_maximum_queue"]
-                    if any(not isinstance(queue.get(field), int) or queue[field] < 0 for field in QUEUE_METRICS):
-                        raise ValueError(f"Missing or invalid {role} queue metrics in {key}")
+                require_queue_metrics(metrics, key)
         rooms[cell][variant].append({"metrics": metrics})
 
     reference_keys = set()
@@ -123,14 +152,21 @@ def main():
     parser.add_argument("--reference", "--fusion", dest="reference", type=Path, required=True,
                         help="Property-line matrix with the old release, optimized Direct and Fusion cohorts")
     parser.add_argument("--baseline-sha", help="SHA-256 of the fixed optimized Direct archive")
+    parser.add_argument("--baseline-queues", type=Path, help="Supplemental queue-only A run from the instrumented baseline")
     parser.add_argument("--direct-module-sha", help="SHA-256 of B's standalone Direct ABI module")
     args = parser.parse_args()
     sys.path.insert(0, str(args.probes.resolve()))
     import property_verdict
+    native = args.native.read_bytes()
     reference = args.reference.read_bytes()
-    result = evaluate(read(args.native.read_bytes()), read(reference), property_verdict, args.baseline_sha,
+    result = evaluate(read(native), read(reference), property_verdict, args.baseline_sha,
                       args.direct_module_sha)
+    result["native_results_sha256"] = sha256(native).hexdigest()
     result["property_reference_sha256"] = sha256(reference).hexdigest()
+    if args.baseline_queues:
+        baseline_queues = args.baseline_queues.read_bytes()
+        attach_baseline_queues(result, read(baseline_queues))
+        result["A_queue_results_sha256"] = sha256(baseline_queues).hexdigest()
     print(json.dumps(result, indent=2))
     return 0 if result["tcp_release_passes"] else 1
 
