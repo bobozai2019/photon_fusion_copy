@@ -213,15 +213,20 @@ def tcp_raw(api):
     print("TCP: fragmented header/payload, coalesced frames, protocol close, refused connection")
 
 
-def main(path):
+def load_api(path, expected):
     library = c.CDLL(str(path.resolve()))
     get_api = library.netcode_transport_get_api
     get_api.argtypes = [U32, U32, PTR]
     get_api.restype = U32
     api = API()
     assert get_api(1, c.sizeof(api), c.byref(api)) == OK
-    assert api.abi == 1 and api.size == c.sizeof(api) and read_span(api.provider_id) == b"tcp"
+    assert api.abi == 1 and api.size == c.sizeof(api) and read_span(api.provider_id) == expected
     print("Provider build", read_span(api.build_id).decode("ascii"))
+    return library, api
+
+
+def main(path):
+    library, api = load_api(path, b"tcp")
     invalid = Args(CONNECT, span(b"missing-port"), span(b""))
     handle = PTR()
     assert api.open(c.byref(invalid), c.byref(handle)) == INVALID_CONFIG and not handle
