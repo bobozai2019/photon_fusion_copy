@@ -1,0 +1,7 @@
+{
+  "name": "com.netcode.runtime",
+  "version": "0.1.0",
+  "displayName": "Netcode Runtime",
+  "description": "Session, object replication and RPC components for Unity on Windows x64.",
+  "unity": "6000.4"
+}

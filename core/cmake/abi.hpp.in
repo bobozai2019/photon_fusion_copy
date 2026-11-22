@@ -1,0 +1,11 @@
+#pragma once
+#if defined(_MSC_VER)
+#include <yvals.h>
+#if defined(_DLL) != @NETCODE_USES_DLL@
+#error NetcodeCore CRT mismatch. Use the same /MT or /MD family as the installed SDK.
+#endif
+#if defined(_DEBUG) != @NETCODE_IS_DEBUG@
+#error NetcodeCore configuration mismatch. Select the matching Debug or Release SDK.
+#endif
+static_assert(_ITERATOR_DEBUG_LEVEL == (@NETCODE_IS_DEBUG@ ? 2 : 0), "NetcodeCore STL iterator ABI mismatch");
+#endif

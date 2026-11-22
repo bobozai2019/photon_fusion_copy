@@ -1,0 +1,10 @@
+@PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+find_dependency(NetcodeCore @NetcodeCore_VERSION@ EXACT CONFIG)
+if(NOT NetcodeCore_BUILD_ID STREQUAL "@NetcodeCore_BUILD_ID@")
+    message(FATAL_ERROR "This Cocos SDK needs Core build @NetcodeCore_BUILD_ID@. Select the matching Core package or rebuild Cocos.")
+endif()
+if(NOT TARGET cocos2d)
+    message(FATAL_ERROR "Define the host engine target cocos2d before finding NetcodeCocos.")
+endif()
+include("${CMAKE_CURRENT_LIST_DIR}/NetcodeCocosTargets.cmake")

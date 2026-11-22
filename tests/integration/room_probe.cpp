@@ -16,14 +16,20 @@ int host_process(const DirectConfig& config, bool stall)
     std::cout << "listening port=" << config.port << std::endl;
     const auto started = Clock::now();
     TimePoint next{};
+    bool checked_locked_join = false;
     for (;;) {
         const auto now = Clock::now();
-        for (const auto& event : link->poll(now)) room.receive(event);
+        for (const auto& event : link->poll(now)) {
+            const bool attempted = room.phase() == RoomPhase::Playing && !room.member(event.peer) &&
+                event.type == EventType::Message && event.lane == Lane::Control;
+            room.receive(event);
+            if (attempted && !room.member(event.peer)) checked_locked_join = true;
+        }
         if (now - started > 14s) return 1;
         if (!room.round() && room.members().size() == 2) {
             room.start();
             std::cout << "round=1 seats=2" << std::endl;
-            next = now + 1500ms;
+            next = now;
             if (stall) {
                 // Deliver the start before stopping the host event loop.
                 for (int i = 0; i < 5; ++i) {
@@ -36,6 +42,7 @@ int host_process(const DirectConfig& config, bool stall)
             }
         } else if (room.round() && now >= next) {
             if (room.round() == 1 && room.phase() == RoomPhase::Playing) {
+                if (!checked_locked_join) { std::this_thread::sleep_for(5ms); continue; }
                 room.end_round();
                 std::cout << "waiting" << std::endl;
                 next = now + 300ms;

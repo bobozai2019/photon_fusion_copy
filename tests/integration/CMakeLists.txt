@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.21)
+project(InstalledCoreConsumer LANGUAGES CXX)
+find_package(NetcodeCore CONFIG REQUIRED)
+add_executable(room_probe room_probe.cpp)
+target_link_libraries(room_probe PRIVATE Netcode::Direct)

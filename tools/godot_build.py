@@ -7,15 +7,13 @@ import shutil
 import subprocess
 from zipfile import ZipFile
 
-from artifacts import ROOT, item_at
+from artifacts import item_at
 
 
-REPO = ROOT.parent
 CPP_TAG = "godot-4.5-stable"
 CPP_HASH = "0316ea168750b5f4f1caea6457657a6c64241f890f78e2f042aee4be2b1085bf"
 CPP_DIRECTORY = f"godot-cpp-{CPP_TAG}"
 DEFAULT_GODOT = Path("D:/godot/Godot_v4.7.1-stable/Godot_v4.7.1-stable_win64.exe")
-GODOT_PROJECT = ROOT / "build/win-x64/Release/bin/Release/godot"
 
 
 def resolve_godot(requested=None):
@@ -70,8 +68,13 @@ def import_project(godot, project):
     cache = project / ".godot"
     cache.mkdir(exist_ok=True)
     extensions = cache / "extension_list.cfg"
-    if not extensions.exists():
-        extensions.write_text("res://netcode_yard.gdextension\n", encoding="utf-8")
+    descriptor = "res://addons/netcode/netcode.gdextension"
+    original = extensions.read_text(encoding="utf-8").splitlines() if extensions.exists() else []
+    entries = [line for line in original if line]
+    if descriptor not in entries:
+        entries.append(descriptor)
+    if entries != original:
+        extensions.write_text("\n".join(entries) + "\n", encoding="utf-8")
     result = subprocess.run(
         [console_godot(godot), "--headless", "--path", project, "--editor", "--import", "--language", "en"],
         cwd=project, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,

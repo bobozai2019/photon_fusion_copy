@@ -20,6 +20,22 @@ void check(bool ok, const char* message)
 int main()
 {
     using namespace netcode;
+    Values rich{Vector4{{1,2,3,4}},Color{{.25f,0,1,1}},ObjectReference{0xfedcba9876543210ull},
+                Bytes{255,0},Vector2Array{{1,-2}},IntMap{{-1,42},{7,-6}},IntLinkedList{2,2,-1}};
+    for (const auto& v:rich) {
+        auto kind=FieldType(v.index());
+        Field f{1,kind,static_cast<uint16_t>(field_capacity({1,kind}) ? 0 : 3)};
+        check(valid_value(f,v),"new field rejected");
+        Writer w; write_value(w,v); Reader r(w.bytes()); Value decoded;
+        check(read_value(r,f,decoded) && r.done() && v==decoded,"new field did not round trip");
+        auto short_data=w.bytes(); short_data.pop_back(); Reader short_read(short_data);
+        check(!read_value(short_read,f,decoded),"truncated field accepted");
+    }
+    check(!valid_value({1,FieldType::ByteArray,2},Bytes{1,2,3}),"capacity ignored");
+    Writer duplicate; duplicate.u16(2);
+    for(int i=0;i<2;++i){duplicate.u32(1); duplicate.u32(7);}
+    Reader map_read(duplicate.bytes()); Value bad_map;
+    check(!read_value(map_read,{1,FieldType::IntDictionary,2},bad_map),"duplicate map key accepted");
     constexpr RoomId room = 10;
     constexpr RoundId round = 2;
     Schemas schemas;

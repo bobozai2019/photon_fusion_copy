@@ -21,7 +21,7 @@ def run(executable, port, mode):
         def launch(role, expectation):
             process = stack.enter_context(subprocess.Popen(
                 [executable, role, str(port), expectation], stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT, text=True, creationflags=subprocess.CREATE_NO_WINDOW,
+                stderr=subprocess.STDOUT, text=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             ))
 
             def stop():

@@ -16,3 +16,4 @@ __pycache__/
 .env
 .env.*
 export_credentials.cfg
+steam_appid.txt

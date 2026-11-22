@@ -2,12 +2,15 @@
 
 #include <algorithm>
 #include <random>
+#include <stdexcept>
 
 namespace netcode {
 namespace {
 
 constexpr std::uint8_t version = 1;
-enum class Control : std::uint8_t { Join = 1, Resume, Entered, Seats, RoundEnded, RoomEnded, Rejected };
+enum class Control : std::uint8_t {
+    Join = 1, Resume, Entered, Seats, RoundEnded, RoomEnded, Rejected, Roster, ChatInput, ChatMessage, JoinExtended
+};
 
 Writer control(Control type)
 {
@@ -55,10 +58,46 @@ bool read_ticket(Reader& r, ResumeTicket& ticket)
     return true;
 }
 
+bool valid_chat(std::string_view text)
+{
+    return !text.empty() && text.size() <= room_chat_limit &&
+        std::any_of(text.begin(), text.end(), [](char byte) { return byte != ' '; }) &&
+        std::none_of(text.begin(), text.end(), [](unsigned char byte) { return byte < 32 || byte == 127; });
 }
 
-RoomHost::RoomHost(Transport& transport, RoomId room)
-    : transport_(transport), room_(room ? room : new_room()) {}
+bool read_chat(Reader& r, std::string& text)
+{
+    Bytes bytes;
+    if (r.remaining() == 0 || r.remaining() > room_chat_limit || !r.read(r.remaining(), bytes)) return false;
+    text.assign(bytes.begin(), bytes.end());
+    return valid_chat(text);
+}
+
+Writer chat_message(RoomId room, const RoomMessage& message)
+{
+    auto w = control(Control::ChatMessage);
+    w.u64(room);
+    w.u32(message.sender);
+    w.append(Bytes(message.text.begin(), message.text.end()));
+    return w;
+}
+
+void remember(std::deque<RoomMessage>& messages, RoomMessage message)
+{
+    constexpr std::size_t history_limit = 32;
+    if (messages.size() == history_limit) messages.pop_front();
+    messages.push_back(std::move(message));
+}
+
+}
+
+RoomHost::RoomHost(Transport& transport, RoomId room, RoomOptions options)
+    : transport_(transport), room_(room ? room : new_room()), options_(options) {
+    if (!options.coordinator) throw std::invalid_argument("Room coordinator must have a player ID");
+    members_.emplace(options.coordinator,Member{options.coordinator,0,true});
+    next_player_=options.coordinator+1;
+    if (!options.capacity) throw std::invalid_argument("Room capacity must include the host");
+}
 
 const Member* RoomHost::member(Peer peer) const
 {
@@ -76,8 +115,31 @@ bool RoomHost::ready(Peer peer)
     return true;
 }
 
-void RoomHost::receive(const Event& event)
+bool RoomHost::set_player_ttl(std::optional<uint32_t> ms)
 {
+    if (phase_ != RoomPhase::Waiting) return false;
+    options_.player_ttl_ms = ms;
+    return true;
+}
+
+std::vector<PlayerId> RoomHost::expire(TimePoint now)
+{
+    std::vector<PlayerId> removed;
+    if (!options_.player_ttl_ms) return removed;
+    for (auto it = members_.begin(); it != members_.end();) {
+        const auto& m = it->second;
+        if (!m.peer && m.reserved_until && now >= *m.reserved_until) {
+            removed.push_back(m.id);
+            it = members_.erase(it);
+        } else ++it;
+    }
+    if (!removed.empty()) publish();
+    return removed;
+}
+
+void RoomHost::receive(const Event& event, TimePoint now)
+{
+    expire(now);
     if (event.type == EventType::Closed) {
         const auto* joined = member(event.peer);
         if (!joined) return;
@@ -89,34 +151,50 @@ void RoomHost::receive(const Event& event)
             auto& member = members_.at(id);
             member.peer = 0;
             member.ready = false;
+            if (options_.player_ttl_ms) member.reserved_until = now + std::chrono::milliseconds(*options_.player_ttl_ms);
         }
         return;
     }
     if (event.type != EventType::Message || event.lane != Lane::Control) return;
     Reader r(event.payload);
     Control type;
-    if (!read_control(r, type) || member(event.peer)) {
+    if (!read_control(r, type)) {
         reject(event.peer, Reject::Protocol);
         return;
     }
+    if (const auto* joined = member(event.peer)) {
+        if (type != Control::ChatInput) return reject(event.peer, Reject::Protocol);
+        std::string text;
+        if (phase_ == RoomPhase::Waiting && read_chat(r, text)) broadcast_chat(joined->id, std::move(text));
+        return;
+    }
     switch (type) {
-    case Control::Join: join(event.peer, r); break;
+    case Control::Join: join(event.peer, r, false); break;
+    case Control::JoinExtended: join(event.peer, r, true); break;
     case Control::Resume: resume(event.peer, r); break;
     default: reject(event.peer, Reject::Protocol); break;
     }
 }
 
-void RoomHost::join(Peer peer, Reader& reader)
+void RoomHost::join(Peer peer, Reader& reader, bool extended)
 {
     RoomId requested;
-    if (!reader.u64(requested) || !reader.done()) return reject(peer, Reject::Protocol);
+    std::uint8_t spectator = 0;
+    if (!reader.u64(requested) || (extended && (!reader.u8(spectator) || spectator > 1)) || !reader.done()) return reject(peer, Reject::Protocol);
     if (requested && requested != room_) return reject(peer, Reject::WrongRoom);
-    if (phase_ != RoomPhase::Waiting) return reject(peer, Reject::Locked);
-    if (members_.size() >= room_capacity) return reject(peer, Reject::Full);
+    if (!extended && options_.capacity > room_capacity) return reject(peer, Reject::Protocol);
+    if ((spectator && !options_.spectators) ||
+        (phase_ != RoomPhase::Waiting && !(extended && phase_ == RoomPhase::Playing && options_.late_join)))
+        return reject(peer, Reject::Locked);
+    if (members_.size() >= options_.capacity) return reject(peer, Reject::Full);
     const auto id = next_player_++;
-    const auto it = members_.emplace(id, Member{id, peer, false}).first;
+    const auto it = members_.emplace(id, Member{id, peer, false, phase_ == RoomPhase::Playing ? random_key() : Key{}, spectator != 0}).first;
     entered(it->second, false);
     publish();
+    if (phase_ != RoomPhase::Waiting) return;
+    for (const auto& message : messages_) {
+        transport_.send(peer, Lane::Control, chat_message(room_, message).bytes());
+    }
 }
 
 void RoomHost::resume(Peer peer, Reader& reader)
@@ -125,12 +203,13 @@ void RoomHost::resume(Peer peer, Reader& reader)
     if (!read_ticket(reader, ticket) || !reader.done()) return reject(peer, Reject::Protocol);
     const auto it = members_.find(ticket.player);
     if (phase_ != RoomPhase::Playing || ticket.room != room_ || ticket.round != round_ ||
-        ticket.player == host_player || it == members_.end() || it->second.peer ||
+        ticket.player == options_.coordinator || it == members_.end() || it->second.peer ||
         it->second.key != ticket.key) {
         return reject(peer, Reject::BadResume);
     }
     auto& joined = it->second;
     joined.peer = peer;
+    joined.reserved_until.reset();
     joined.ready = false;
     entered(joined, true);
 }
@@ -148,6 +227,39 @@ void RoomHost::publish()
     auto w = control(Control::Seats);
     w.u64(room_);
     w.u8(static_cast<std::uint8_t>(members_.size()));
+    auto roster = control(Control::Roster);
+    roster.u64(room_);
+    roster.u8(static_cast<std::uint8_t>(members_.size()));
+    for (const auto& [id, member] : members_) roster.u32(id);
+    for (const auto& [id, member] : members_) {
+        if (!member.peer) continue;
+        transport_.send(member.peer, Lane::Control, w.bytes());
+        transport_.send(member.peer, Lane::Control, roster.bytes());
+    }
+}
+
+bool RoomHost::kick(PlayerId player)
+{
+    if (phase_ != RoomPhase::Waiting || player == options_.coordinator) return false;
+    const auto it = members_.find(player);
+    if (it == members_.end()) return false;
+    reject(it->second.peer, Reject::Kicked);
+    members_.erase(it);
+    publish();
+    return true;
+}
+
+bool RoomHost::chat(std::string_view text)
+{
+    if (phase_ != RoomPhase::Waiting || !valid_chat(text)) return false;
+    broadcast_chat(options_.coordinator, std::string(text));
+    return true;
+}
+
+void RoomHost::broadcast_chat(PlayerId sender, std::string text)
+{
+    remember(messages_, {sender, std::move(text)});
+    const auto w = chat_message(room_, messages_.back());
     for (const auto& [id, member] : members_) {
         if (member.peer) transport_.send(member.peer, Lane::Control, w.bytes());
     }
@@ -158,7 +270,7 @@ void RoomHost::entered(const Member& member, bool resumed)
     auto w = control(Control::Entered);
     write_ticket(w, {room_, phase_ == RoomPhase::Playing ? round_ : 0, member.id, member.key});
     w.u8(static_cast<std::uint8_t>(members_.size()));
-    w.u8(resumed ? 1 : 0);
+    w.u8((resumed ? 1 : 0) | (member.spectator ? 2 : 0));
     transport_.send(member.peer, Lane::Control, w.bytes());
 }
 
@@ -185,7 +297,7 @@ bool RoomHost::end_round()
     phase_ = RoomPhase::Waiting;
     for (auto it = members_.begin(); it != members_.end();) {
         auto& member = it->second;
-        if (member.id != host_player && !member.peer) {
+        if (member.id != options_.coordinator && !member.peer) {
             it = members_.erase(it);
             continue;
         }
@@ -213,9 +325,17 @@ void RoomHost::end_room()
     }
 }
 
-RoomGuest::RoomGuest(Transport& transport, RoomId requested, std::optional<ResumeTicket> resume)
+RoomGuest::RoomGuest(Transport& transport, RoomId requested, std::optional<ResumeTicket> resume, bool spectator, bool extended, PlayerId coordinator)
     : transport_(transport), requested_(requested), resume_(resume),
-      ticket_(resume.value_or(ResumeTicket{})) {}
+      ticket_(resume.value_or(ResumeTicket{})), spectator_(spectator), extended_(extended || spectator), coordinator_(coordinator) {}
+
+bool RoomGuest::chat(std::string_view text)
+{
+    if (phase_ != RoomPhase::Waiting || !valid_chat(text)) return false;
+    auto w = control(Control::ChatInput);
+    w.append(Bytes(text.begin(), text.end()));
+    return transport_.send(peer_, Lane::Control, w.bytes());
+}
 
 void RoomGuest::receive(const Event& event)
 {
@@ -228,9 +348,12 @@ void RoomGuest::receive(const Event& event)
     if (phase_ == RoomPhase::Ended) return;
     if (event.type == EventType::Open && phase_ == RoomPhase::Connecting && !peer_) {
         peer_ = event.peer;
-        auto w = control(resume_ ? Control::Resume : Control::Join);
+        auto w = control(resume_ ? Control::Resume : extended_ ? Control::JoinExtended : Control::Join);
         if (resume_) write_ticket(w, *resume_);
-        else w.u64(requested_);
+        else {
+            w.u64(requested_);
+            if (extended_) w.u8(spectator_);
+        }
         transport_.send(peer_, Lane::Control, w.bytes());
         return;
     }
@@ -244,7 +367,7 @@ void RoomGuest::receive(const Event& event)
         std::uint8_t seats, resumed;
         if (!read_ticket(r, ticket) || !r.u8(seats) || !r.u8(resumed) || !r.done() ||
             !ticket.room || (requested_ && ticket.room != requested_) ||
-            seats < 2 || seats > room_capacity || resumed > 1 ||
+            seats < 2 || resumed > 3 ||
             (ticket_.player && (ticket.player != ticket_.player || ticket.room != ticket_.room))) {
             return;
         }
@@ -252,14 +375,38 @@ void RoomGuest::receive(const Event& event)
         seats_ = seats;
         phase_ = ticket.round ? RoomPhase::Playing : RoomPhase::Waiting;
         ready_ = false;
-        resumed_ = resumed != 0;
+        resumed_ = (resumed & 1) != 0;
+        spectator_ = (resumed & 2) != 0;
         break;
     }
     case Control::Seats: {
         RoomId room;
         std::uint8_t seats;
         if (r.u64(room) && r.u8(seats) && r.done() && room == ticket_.room &&
-            seats >= 2 && seats <= room_capacity) seats_ = seats;
+            seats >= 2) seats_ = seats;
+        break;
+    }
+    case Control::Roster: {
+        RoomId room;
+        std::uint8_t count;
+        if (!r.u64(room) || room != ticket_.room || !r.u8(count) || count < 2) break;
+        std::vector<PlayerId> players(count);
+        for (auto& id : players) {
+            if (!r.u32(id)) return;
+        }
+        if (!r.done() || std::find(players.begin(),players.end(),coordinator_)==players.end() || !std::is_sorted(players.begin(), players.end()) ||
+            std::adjacent_find(players.begin(), players.end()) != players.end() ||
+            !std::binary_search(players.begin(), players.end(), ticket_.player)) break;
+        players_ = std::move(players);
+        break;
+    }
+    case Control::ChatMessage: {
+        RoomId room;
+        RoomMessage message;
+        if (phase_ == RoomPhase::Waiting && r.u64(room) && room == ticket_.room &&
+            r.u32(message.sender) && message.sender && read_chat(r, message.text)) {
+            remember(messages_, std::move(message));
+        }
         break;
     }
     case Control::RoundEnded: {
@@ -286,7 +433,7 @@ void RoomGuest::receive(const Event& event)
     }
     case Control::Rejected: {
         std::uint8_t reason;
-        if (r.u8(reason) && r.done() && reason > 0 && reason <= static_cast<std::uint8_t>(Reject::Protocol)) {
+        if (r.u8(reason) && r.done() && reason > 0 && reason <= static_cast<std::uint8_t>(Reject::Kicked)) {
             rejected_ = static_cast<Reject>(reason);
             phase_ = RoomPhase::Ended;
         }

@@ -1,4 +1,4 @@
-#include "bridge.hpp"
+#include "game.hpp"
 
 #include <godot_cpp/godot.hpp>
 #include <godot_cpp/core/class_db.hpp>
@@ -8,7 +8,7 @@ namespace {
 void initialize(godot::ModuleInitializationLevel level)
 {
     if (level == godot::MODULE_INITIALIZATION_LEVEL_SCENE) {
-        godot::ClassDB::register_class<NetcodeYard>();
+        godot::ClassDB::register_class<NetcodeGame>();
     }
 }
 
@@ -16,7 +16,7 @@ void uninitialize(godot::ModuleInitializationLevel) {}
 
 }
 
-extern "C" GDExtensionBool GDE_EXPORT netcode_yard_init(
+extern "C" GDExtensionBool GDE_EXPORT netcode_init(
     GDExtensionInterfaceGetProcAddress functions, GDExtensionClassLibraryPtr library,
     GDExtensionInitialization* initialization)
 {

@@ -74,6 +74,7 @@ def budget(root, incoming=0, ceiling=16 * GIB, reserve=8 * GIB):
 def managed_slot(relative):
     return re.fullmatch(
         r"(?:tmp/[a-zA-Z0-9_-]+|build/win-x64/(?:Debug|Release)"
+        r"|build/win-x64/sdk/(?:core|godot|cocos|unity)/(?:Debug|Release)"
         r"|runs/(?:current|last-pass|last-fail))", relative.as_posix()
     )
 
@@ -148,6 +149,8 @@ def clean(root, apply=False, include_build=False):
     if include_build:
         candidates += [(root / "build" / "win-x64" / config, "build")
                        for config in ("Debug", "Release")]
+        candidates += [(root / "build/win-x64/sdk" / product / config, "build")
+                       for product in ("core", "godot", "cocos", "unity") for config in ("Debug", "Release")]
     for path, kind in candidates:
         if not path.exists():
             continue

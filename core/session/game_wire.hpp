@@ -4,7 +4,16 @@
 
 namespace netcode {
 
-enum class GameMessage : std::uint8_t { Input = 1, Snapshot, StateAck, Ready, Rpc, RpcAck };
+enum class GameMessage : std::uint8_t {
+    Input = 1, Snapshot, StateAck, Ready, Rpc, RpcAck,
+    AuthorityOffer = 64, AuthorityModels, AuthorityGrant, AuthorityState, AuthorityAck, AuthorityInput,
+    PredictionHello, InputHistory, Checkpoint, CollisionWorld,
+    ClaimHello, ClaimSupported, ClaimRequest, ClaimPrompt, ClaimAnswer, ClaimResult, ClockProbe, ClockSample,
+    WorldHello, WorldOffer, WorldMaps, MapReady, WorldObjects, SpawnRequest, SpawnResult,
+    ModelHello, ModelFrame, ModelInputs, RpcSkip, CodecHello, CompactSnapshot, CodecAck, CodecReset,
+    MigrationHello, MigrationPermit, MigrationPulse, MigrationEcho, MigrationChunk, MigrationVote, MigrationCommit,
+    WorldExtendedHello, WorldExtendedObjects, MigrationYield, MigrationYieldAck, WorldNamespace, SpawnReferenced
+};
 
 inline Writer game_packet(GameMessage type, RoomId room, RoundId round)
 {

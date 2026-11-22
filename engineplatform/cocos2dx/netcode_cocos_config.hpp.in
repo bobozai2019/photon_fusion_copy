@@ -1,0 +1,4 @@
+#pragma once
+#if CC_USE_PHYSICS != @physics2d@ || CC_USE_3D_PHYSICS != @physics3d@
+#error Cocos physics configuration does not match NetcodeCocos. Select or rebuild the matching SDK.
+#endif
