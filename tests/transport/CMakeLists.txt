@@ -1,0 +1,20 @@
+cmake_minimum_required(VERSION 3.21)
+project(NetcodeTransportContract LANGUAGES C CXX)
+enable_testing()
+
+set(NETCODE_TRANSPORT_INCLUDE "" CACHE PATH "Installed Netcode transport SDK include directory")
+if(NOT EXISTS "${NETCODE_TRANSPORT_INCLUDE}/netcode/transport_provider.h")
+    message(FATAL_ERROR "Install network/api and set NETCODE_TRANSPORT_INCLUDE to its include directory.")
+endif()
+
+add_library(transport_fixture MODULE fixture.c)
+target_include_directories(transport_fixture PRIVATE "${NETCODE_TRANSPORT_INCLUDE}")
+target_compile_features(transport_fixture PRIVATE c_std_11)
+target_compile_definitions(transport_fixture PRIVATE NC_TRANSPORT_BUILD_DLL)
+set_target_properties(transport_fixture PROPERTIES C_VISIBILITY_PRESET hidden)
+
+add_executable(transport_contract contract.cpp)
+target_include_directories(transport_contract PRIVATE "${NETCODE_TRANSPORT_INCLUDE}")
+target_compile_features(transport_contract PRIVATE cxx_std_17)
+target_link_libraries(transport_contract PRIVATE ${CMAKE_DL_LIBS})
+add_test(NAME transport_v1_contract COMMAND transport_contract "$<TARGET_FILE:transport_fixture>")
