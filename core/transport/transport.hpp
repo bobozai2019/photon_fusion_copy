@@ -34,6 +34,14 @@ struct Traffic {
     std::uint64_t udp_dropped = 0;
     std::uint64_t udp_duplicated = 0, udp_reordered = 0;
     std::size_t queued_bytes = 0, peak_queued_bytes = 0;
+    std::size_t core_peak_queued_bytes = 0;
+    std::uint64_t oldest_queued_us = 0;
+};
+
+enum class SendStatus { Accepted, Blocked, Closed, Invalid, Failed };
+struct BatchResult {
+    SendStatus status;
+    std::size_t accepted;
 };
 
 class Transport {
@@ -41,6 +49,12 @@ public:
     virtual ~Transport() = default;
     virtual std::vector<Event> poll(TimePoint now) = 0;
     virtual bool send(Peer peer, Lane lane, const Bytes& payload) = 0;
+    virtual BatchResult send_batch(Peer peer, Lane lane, const Bytes* const* messages, std::size_t count) {
+        std::size_t accepted = 0;
+        while (accepted < count && send(peer, lane, *messages[accepted])) ++accepted;
+        return {accepted == count ? SendStatus::Accepted : SendStatus::Blocked, accepted};
+    }
+    virtual bool supports_backpressure() const { return false; }
     virtual void close(Peer peer) = 0;
     virtual Traffic traffic() const = 0;
 };

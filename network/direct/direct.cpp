@@ -1,4 +1,6 @@
 #include "transport/ipv4.hpp"
+#include "direct_stats.hpp"
+
 #ifdef _WIN32
 #include <bcrypt.h>
 #else
@@ -14,6 +16,11 @@ constexpr std::size_t udp_header = 4 + cookie_size;
 constexpr std::size_t queue_limit = 256 * 1024;
 constexpr auto heartbeat = std::chrono::milliseconds(250);
 enum class Frame : std::uint8_t { Heartbeat, Cookie, Message };
+struct QueuedFrame {
+    Bytes bytes;
+    TimePoint queued_at;
+    bool business;
+};
 
 using namespace netcode::ipv4;
 
@@ -88,7 +95,8 @@ struct Connection {
     sockaddr_in udp_address{};
     TimePoint created = Clock::now(), received = created, next_heartbeat{};
     Bytes cookie, incoming;
-    std::deque<Bytes> outgoing;
+    std::deque<QueuedFrame> outgoing;
+    nc_transport_stats provider_stats{};
     std::size_t offset = 0, queued = 0;
     bool connecting = false, open = false, closing = false;
 };
@@ -121,6 +129,7 @@ public:
 
     std::vector<Event> poll(TimePoint now) override
     {
+        last_poll_ = now;
         std::vector<Event> events;
         if (server_) accept_clients(now);
         for (auto it = peers_.begin(); it != peers_.end();) {
@@ -131,6 +140,8 @@ public:
                 continue;
             }
             traffic_.queued_bytes -= link.queued;
+            provider_stats_.lane[NC_TRANSPORT_CONTROL].queued_bytes -=
+                link.provider_stats.lane[NC_TRANSPORT_CONTROL].queued_bytes;
             events.push_back({EventType::Closed, peer, Lane::Control, {}, reason});
             it = peers_.erase(it);
         }
@@ -156,9 +167,39 @@ public:
         if (const auto it = peers_.find(peer); it != peers_.end()) it->second.closing = true;
     }
 
-    Traffic traffic() const override { return traffic_; }
+    Traffic traffic() const override {
+        auto traffic = traffic_;
+        for (const auto& [peer, link] : peers_)
+            if (!link.outgoing.empty())
+                traffic.oldest_queued_us = std::max(traffic.oldest_queued_us, age(link.outgoing.front()));
+        return traffic;
+    }
+
+    bool provider_stats(Peer peer, nc_transport_stats& result) const {
+        const auto found = peers_.find(peer);
+        if (peer && found == peers_.end()) return false;
+        result = peer ? found->second.provider_stats : provider_stats_;
+        auto& oldest = result.lane[NC_TRANSPORT_CONTROL].oldest_queued_us;
+        for (const auto& [id, link] : peers_) {
+            if (peer && id != peer) continue;
+            const auto frame = std::find_if(link.outgoing.begin(), link.outgoing.end(), [](const auto& entry) {
+                return entry.business;
+            });
+            if (frame != link.outgoing.end()) oldest = std::max(oldest, age(*frame));
+        }
+        return true;
+    }
 
 private:
+    uint64_t age(const QueuedFrame& frame) const {
+        const auto us = std::chrono::duration_cast<std::chrono::microseconds>(last_poll_ - frame.queued_at);
+        return us.count() > 0 ? static_cast<uint64_t>(us.count()) : 0;
+    }
+
+    void received(Connection& link, uint32_t lane, size_t size) {
+        provider_stats_.lane[lane].received_bytes += size;
+        link.provider_stats.lane[lane].received_bytes += size;
+    }
     void accept_clients(TimePoint now)
     {
         for (unsigned n = 0; n < 16; ++n) {
@@ -185,7 +226,13 @@ private:
         writer.u32(static_cast<std::uint32_t>(payload.size() + 1));
         writer.u8(static_cast<std::uint8_t>(frame));
         writer.append(payload);
-        link.outgoing.push_back(writer.take());
+        link.outgoing.push_back({writer.take(), last_poll_, frame == Frame::Message});
+        if (frame == Frame::Message) {
+            for (auto* stats : {&provider_stats_.lane[NC_TRANSPORT_CONTROL], &link.provider_stats.lane[NC_TRANSPORT_CONTROL]}) {
+                stats->queued_bytes += payload.size();
+                stats->peak_queued_bytes = std::max(stats->peak_queued_bytes, stats->queued_bytes);
+            }
+        }
         link.queued += size;
         traffic_.queued_bytes += size;
         traffic_.peak_queued_bytes = std::max(traffic_.peak_queued_bytes, traffic_.queued_bytes);
@@ -195,7 +242,8 @@ private:
     Disconnect write_control(Connection& link)
     {
         while (!link.outgoing.empty()) {
-            const Bytes& data = link.outgoing.front();
+            const auto& frame = link.outgoing.front();
+            const Bytes& data = frame.bytes;
             const auto count = ::send(link.tcp, reinterpret_cast<const char*>(data.data() + link.offset),
                                       static_cast<int>(data.size() - link.offset), send_flags);
             if (count < 0) {
@@ -207,6 +255,13 @@ private:
             traffic_.tcp_sent += count;
             link.offset += count;
             if (link.offset == data.size()) {
+                if (frame.business) {
+                    const auto payload_size = data.size() - 5;
+                    for (auto* stats : {&provider_stats_.lane[NC_TRANSPORT_CONTROL], &link.provider_stats.lane[NC_TRANSPORT_CONTROL]}) {
+                        stats->sent_bytes += payload_size;
+                        stats->queued_bytes -= payload_size;
+                    }
+                }
                 link.outgoing.pop_front();
                 link.offset = 0;
             }
@@ -260,6 +315,7 @@ private:
                     if (server_) return false;
                     mark_open(peer, link, events);
                 }
+                received(link, NC_TRANSPORT_CONTROL, payload.size());
                 events.push_back({EventType::Message, peer, Lane::Control, std::move(payload)});
                 break;
             default:
@@ -296,7 +352,7 @@ private:
         return link.closing && link.outgoing.empty() ? Disconnect::Local : write;
     }
 
-    bool datagram(const Connection& link, const Bytes& payload)
+    bool datagram(Connection& link, const Bytes& payload)
     {
         Writer writer;
         writer.u32(signature);
@@ -312,6 +368,8 @@ private:
             return false;
         }
         traffic_.udp_sent += count;
+        provider_stats_.lane[NC_TRANSPORT_GAME].sent_bytes += payload.size();
+        link.provider_stats.lane[NC_TRANSPORT_GAME].sent_bytes += payload.size();
         return true;
     }
 
@@ -360,6 +418,7 @@ private:
                 } else if (link.open) {
                     Bytes payload;
                     reader.read(reader.remaining(), payload);
+                    received(link, NC_TRANSPORT_GAME, payload.size());
                     events.push_back({EventType::Message, peer, Lane::Game, std::move(payload)});
                 }
                 break;
@@ -376,6 +435,8 @@ private:
     Peer next_peer_ = 1;
     std::map<Peer, Connection> peers_;
     Traffic traffic_;
+    TimePoint last_poll_ = Clock::now();
+    nc_transport_stats provider_stats_{};
 };
 
 }
@@ -388,6 +449,10 @@ std::unique_ptr<Transport> listen_direct(const DirectConfig& config)
 std::unique_ptr<Transport> connect_direct(const DirectConfig& config)
 {
     return std::make_unique<Direct>(config, false);
+}
+
+bool direct_provider_stats(const Transport& link, Peer peer, nc_transport_stats& out) {
+    return static_cast<const Direct&>(link).provider_stats(peer, out);
 }
 
 }
