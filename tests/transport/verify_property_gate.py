@@ -6,20 +6,26 @@ import json
 from pathlib import Path
 import sys
 
+QUEUE_METRICS = ("queued_bytes", "provider_peak_queued_bytes", "core_peak_queued_bytes", "oldest_queued_us")
+
 
 def read(data):
     return [json.loads(row) for row in data.decode("utf-8-sig").splitlines() if row.strip()]
 
 
-def evaluate(native, reference, verdict, baseline_sha=None):
+def evaluate(native, reference, verdict, baseline_sha=None, direct_module_sha=None):
     rooms = defaultdict(lambda: defaultdict(list))
     builds = defaultdict(set)
+    providers = defaultdict(set)
     native_keys = set()
+    direct_modules = set()
     for record in native:
         variant = record["variant"]
         if variant not in ("A", "B", "C"):
             raise ValueError(f"Unexpected variant {variant}")
         builds[variant].add(record["sdk_sha256"])
+        if variant == "B":
+            direct_modules.add(record.get("provider_sha256"))
         cell = record["fields"], record["workload"]
         key = (variant, *cell, record["trial"])
         if key in native_keys:
@@ -28,9 +34,20 @@ def evaluate(native, reference, verdict, baseline_sha=None):
         metrics = record.get("result", {"correct": False})
         if metrics["correct"]:
             owner, remote = metrics["owner_transport"], metrics["remote_transport"]
-            expected = owner.startswith("tcp/") if variant == "C" else owner == "direct"
+            if variant == "C":
+                expected = owner.startswith("tcp/") and owner.endswith("/v1")
+            elif variant == "B" and record.get("provider_sha256"):
+                expected = owner.startswith("direct/") and owner.endswith("/v1")
+            else:
+                expected = owner == "direct"
             if owner != remote or not expected:
                 raise ValueError(f"Unexpected providers in {key}: {owner!r}, {remote!r}")
+            providers[variant].add(owner)
+            if variant in ("B", "C"):
+                for role in ("owner", "remote"):
+                    queue = metrics[f"{role}_maximum_queue"]
+                    if any(not isinstance(queue.get(field), int) or queue[field] < 0 for field in QUEUE_METRICS):
+                        raise ValueError(f"Missing or invalid {role} queue metrics in {key}")
         rooms[cell][variant].append({"metrics": metrics})
 
     reference_keys = set()
@@ -53,8 +70,12 @@ def evaluate(native, reference, verdict, baseline_sha=None):
 
     if any(len(fingerprints) > 1 for fingerprints in builds.values()):
         raise ValueError("A variant changed builds during the matrix")
+    if any(len(labels) > 1 for labels in providers.values()):
+        raise ValueError("A variant changed runtime providers during the matrix")
     if baseline_sha and builds["A"] != {baseline_sha}:
         raise ValueError("A does not match the fixed optimized Direct SDK hash")
+    if len(direct_modules) > 1 or (direct_module_sha and direct_modules != {direct_module_sha}):
+        raise ValueError("B does not match the fixed Direct module hash")
     if builds["B"] != builds["C"]:
         raise ValueError("B and C require the same candidate SDK hash")
 
@@ -75,7 +96,9 @@ def evaluate(native, reference, verdict, baseline_sha=None):
                           "added_by_tcp": [item for item in results["C"]["failures"]
                                            if item not in results["B"]["failures"]]})
     return {"builds": {key: next(iter(value), None) for key, value in builds.items()},
+            "providers": {key: next(iter(value)) for key, value in providers.items()},
             "A_source": "transport-run" if measured_a else "property-reference",
+            "direct_module_sha256": next(iter(direct_modules), None),
             "cells": cells,
             "tcp_release_passes": all(cell["variants"]["C"]["status"] == "pass" for cell in cells)}
 
@@ -87,11 +110,13 @@ def main():
     parser.add_argument("--reference", "--fusion", dest="reference", type=Path, required=True,
                         help="Property-line matrix with the old release, optimized Direct and Fusion cohorts")
     parser.add_argument("--baseline-sha", help="SHA-256 of the fixed optimized Direct archive")
+    parser.add_argument("--direct-module-sha", help="SHA-256 of B's standalone Direct ABI module")
     args = parser.parse_args()
     sys.path.insert(0, str(args.probes.resolve()))
     import property_verdict
     reference = args.reference.read_bytes()
-    result = evaluate(read(args.native.read_bytes()), read(reference), property_verdict, args.baseline_sha)
+    result = evaluate(read(args.native.read_bytes()), read(reference), property_verdict, args.baseline_sha,
+                      args.direct_module_sha)
     result["property_reference_sha256"] = sha256(reference).hexdigest()
     print(json.dumps(result, indent=2))
     return 0 if result["tcp_release_passes"] else 1

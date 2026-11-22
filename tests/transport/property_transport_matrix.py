@@ -11,7 +11,6 @@ sys.path.insert(0, str(REPO / "tools"))
 from artifacts import ROOT, RUN_LIMIT, budget, tree_size
 
 LEGACY_OPEN = 'spawner.open(writer, "127.0.0.1", int(args[2]), 2)'
-TCP_OPEN = 'spawner.open_with_provider(writer, "127.0.0.1:" + args[2], 2, "tcp", "", PackedByteArray(), PackedByteArray(), false)'
 METRICS = """
 var maximum_queue := {}
 
@@ -48,6 +47,13 @@ def fingerprint(path):
         return file_digest(stream, "sha256").hexdigest()
 
 
+def provider_open(provider, module=None):
+    path = module.resolve().as_posix() if module else ""
+    return ('spawner.open_with_provider(writer, "127.0.0.1:" + args[2], 2, '
+            f'{json.dumps(provider)}, {json.dumps(path, ensure_ascii=False)}, '
+            'PackedByteArray(), PackedByteArray(), false)')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--probes", type=Path, required=True, help="Existing property_scale/rigid_scale probe sources")
@@ -55,6 +61,8 @@ def main():
     parser.add_argument("--godot", type=Path)
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--candidate", type=Path, required=True)
+    parser.add_argument("--direct-module", type=Path,
+                        help="Direct ABI module for B (defaults to the standalone DLL beside the candidate archive when present)")
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--counts", type=int, nargs="+", choices=range(1000, 5001, 1000),
                         default=(1000, 2000, 3000, 4000, 5000))
@@ -68,13 +76,18 @@ def main():
         parser.error("The existing output budget cannot accommodate this run")
     prop, runner = load_probe(args)
     width = 20
-    variants = {"B": (args.candidate, "direct"), "C": (args.candidate, "tcp")}
+    direct_module = args.direct_module
+    if direct_module is None:
+        sibling = args.candidate.with_name("netcode_transport_direct.dll")
+        direct_module = sibling if sibling.is_file() else None
+    direct_digest = fingerprint(direct_module) if direct_module else None
+    variants = {"B": (args.candidate, "direct", direct_module), "C": (args.candidate, "tcp", None)}
     if args.baseline:
-        variants = {"A": (args.baseline, "direct"), **variants}
+        variants = {"A": (args.baseline, "direct", None), **variants}
 
     work.mkdir(parents=True, exist_ok=False)
     projects = {}
-    for name, (archive, provider) in variants.items():
+    for name, (archive, provider, module) in variants.items():
         job = work / name
         job.mkdir()
 
@@ -83,8 +96,8 @@ def main():
             files = prop.fixture(False, width)
             if LEGACY_OPEN not in files["main.gd"]:
                 raise ValueError("Property probe open call changed. Review the provider injection point.")
-            if provider == "tcp":
-                files["main.gd"] = files["main.gd"].replace(LEGACY_OPEN, TCP_OPEN, 1)
+            if provider == "tcp" or module:
+                files["main.gd"] = files["main.gd"].replace(LEGACY_OPEN, provider_open(provider, module), 1)
             files["main.gd"] += METRICS
             return files
 
@@ -102,6 +115,8 @@ def main():
                             raise RuntimeError("Property probe evidence reached the run size limit")
                         project, digest = projects[name]
                         entry = {"variant": name, "sdk_sha256": digest, "fields": count, "workload": workload, "trial": trial + 1}
+                        if name == "B" and direct_digest:
+                            entry["provider_sha256"] = direct_digest
                         room = work / name / f"{count}-{workload}-{trial + 1}"
                         room.mkdir()
                         try:
