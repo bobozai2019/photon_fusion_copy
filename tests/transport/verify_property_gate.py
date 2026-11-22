@@ -13,6 +13,17 @@ def read(data):
     return [json.loads(row) for row in data.decode("utf-8-sig").splitlines() if row.strip()]
 
 
+def queue_high_water(rooms):
+    peaks = {}
+    metrics = [room.get("metrics", {}) for room in rooms]
+    for role in ("owner", "remote"):
+        samples = [room.get(f"{role}_maximum_queue") for room in metrics if room.get("correct")]
+        samples = [sample for sample in samples if sample]
+        if samples:
+            peaks[role] = {metric: max(sample[metric] for sample in samples) for metric in QUEUE_METRICS}
+    return peaks or None
+
+
 def evaluate(native, reference, verdict, baseline_sha=None, direct_module_sha=None):
     rooms = defaultdict(lambda: defaultdict(list))
     builds = defaultdict(set)
@@ -89,6 +100,8 @@ def evaluate(native, reference, verdict, baseline_sha=None, direct_module_sha=No
                                               {"old": seen["old"], "candidate": seen[variant], "fusion": seen["fusion"]})
                 for variant in variants
             }
+            for variant in variants:
+                results[variant]["queue_high_water"] = queue_high_water(seen[variant])
             cells.append({"fields": fields, "workload": workload, "variants": results,
                           "inherited_failures": results["A"]["failures"],
                           "added_by_direct": [item for item in results["B"]["failures"]
