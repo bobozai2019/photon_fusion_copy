@@ -3,12 +3,20 @@
 #include "build_info.hpp"
 #include <string>
 #include "field_value.hpp"
+#include "host/game.hpp"
+#include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <sstream>
 #include <algorithm>
 
 using namespace godot;
 namespace {
+const char module_anchor = 0;
+
+std::string byte_string(const PackedByteArray& bytes) {
+    return bytes.size() ? std::string(reinterpret_cast<const char*>(bytes.ptr()), bytes.size()) : std::string{};
+}
+
 bool values_of(const std::vector<netcode::Field>& fields, const Array& array, netcode::Values& result) {
     using namespace netcode;
     if (array.size() != fields.size())
@@ -160,6 +168,13 @@ void NetcodeGame::_bind_methods() {
                                 &NetcodeGame::validate_layout);
     ClassDB::bind_method(D_METHOD("open", "config", "host", "address", "port", "capacity", "watch"),
                          &NetcodeGame::open);
+    ClassDB::bind_method(D_METHOD("open_with_provider", "layout", "host", "endpoint", "capacity", "watch",
+                                 "provider", "module", "config", "resume"),
+                         &NetcodeGame::open_with_provider, DEFVAL(String("tcp")), DEFVAL(String()),
+                         DEFVAL(PackedByteArray()), DEFVAL(PackedByteArray()));
+    ClassDB::bind_method(D_METHOD("transport_build_id"), &NetcodeGame::transport_build_id);
+    ClassDB::bind_method(D_METHOD("transport_stats"), &NetcodeGame::transport_stats);
+    ClassDB::bind_method(D_METHOD("resume_ticket"), &NetcodeGame::resume_ticket);
     ClassDB::bind_method(D_METHOD("model", "schema", "fields", "policy", "cooldown"), &NetcodeGame::model);
     ClassDB::bind_method(D_METHOD("distribute", "object", "kind", "keys", "divisor"),
                          &NetcodeGame::distribute);
@@ -173,6 +188,7 @@ void NetcodeGame::_bind_methods() {
     ClassDB::bind_method(D_METHOD("predicted_fields", "object"), &NetcodeGame::predicted_fields);
     ClassDB::bind_method(D_METHOD("advance"), &NetcodeGame::advance);
     ClassDB::bind_method(D_METHOD("add_standby","player","address","port"),&NetcodeGame::add_standby);
+    ClassDB::bind_method(D_METHOD("add_provider_standby", "player", "endpoint"), &NetcodeGame::add_provider_standby);
     ClassDB::bind_method(D_METHOD("handoff"),&NetcodeGame::handoff);
     ClassDB::bind_method(D_METHOD("migration_phase"),&NetcodeGame::migration_phase);
     ClassDB::bind_method(D_METHOD("start"), &NetcodeGame::start);
@@ -223,10 +239,65 @@ String NetcodeGame::open(const String& config, bool host, const String& address,
         options.admission = {static_cast<uint8_t>(capacity), true, true};
         netcode::DirectConfig direct{address.utf8().get_data(), static_cast<uint16_t>(port)};
         game_ = netcode::open_direct_game(direct,options,layout);
+        transport_build_ = "direct";
         return {};
     } catch (const std::exception& error) {
         return String::utf8(error.what());
     }
+}
+String NetcodeGame::open_with_provider(const String& text, bool host, const String& endpoint, int capacity,
+                                       bool watch, const String& provider, const String& module,
+                                       const PackedByteArray& config, const PackedByteArray& resume) {
+    if (game_ || capacity < 1 || capacity > 255) return "Invalid session options";
+    try {
+        std::istringstream stream(text.utf8().get_data());
+        netcode::ReplicationLayout layout(stream);
+        netcode::SessionOptions options;
+        options.host = host;
+        options.spectator = watch;
+        options.extended_join = true;
+        options.admission = {static_cast<uint8_t>(capacity), true, true};
+        if (!resume.is_empty()) options.resume = netcode::decode_resume_ticket(resume.ptr(), resume.size());
+        String resolved = module;
+        auto* project = ProjectSettings::get_singleton();
+        if (resolved.begins_with("res://") || resolved.begins_with("user://"))
+            resolved = project->globalize_path(resolved);
+        if (resolved.is_empty() && provider == "tcp") {
+            const auto installed = project->globalize_path("res://addons/netcode/bin/netcode_transport_tcp.dll").utf8();
+            std::error_code error;
+            if (std::filesystem::is_regular_file(std::filesystem::u8path(installed.get_data()), error))
+                resolved = String::utf8(installed.get_data());
+        }
+        netcode::ProviderConfig settings{provider.utf8().get_data(), std::filesystem::u8path(resolved.utf8().get_data()),
+                                        byte_string(config)};
+        auto opened = netcode::open_provider_game(settings, endpoint.utf8().get_data(), options, layout, &module_anchor);
+        transport_build_ = String::utf8(opened.provider.label().c_str());
+        game_ = std::move(opened.game);
+        provider_game_ = true;
+        return {};
+    } catch (const std::exception& error) {
+        return String::utf8(error.what());
+    }
+}
+
+PackedByteArray NetcodeGame::resume_ticket() {
+    PackedByteArray result;
+    if (!available() || !game_->session().guest()) return result;
+    const auto bytes = netcode::encode_resume_ticket(game_->session().guest()->ticket());
+    result.resize(bytes.size());
+    if (!bytes.empty()) std::copy(bytes.begin(), bytes.end(), result.ptrw());
+    return result;
+}
+
+Dictionary NetcodeGame::transport_stats() {
+    Dictionary result;
+    if (!available()) return result;
+    const auto stats = game_->session().traffic();
+    result["queued_bytes"] = static_cast<int64_t>(stats.queued_bytes);
+    result["provider_peak_queued_bytes"] = static_cast<int64_t>(stats.peak_queued_bytes);
+    result["core_peak_queued_bytes"] = static_cast<int64_t>(stats.core_peak_queued_bytes);
+    result["oldest_queued_us"] = static_cast<int64_t>(stats.oldest_queued_us);
+    return result;
 }
 bool NetcodeGame::model(int schema, const PackedInt32Array& fields, int policy, int cooldown) {
     if (!available() || schema < 1 || schema > UINT16_MAX || policy < 0 ||
@@ -325,8 +396,12 @@ Dictionary NetcodeGame::advance() {
     return frame;
 }
 bool NetcodeGame::add_standby(int64_t player,const godot::String& address,int port) {
-    return available() && !stepping_ && player > 0 && player <= UINT32_MAX && port > 0 && port <= 65535 &&
+    return available() && !stepping_ && !provider_game_ && player > 0 && player <= UINT32_MAX && port > 0 && port <= 65535 &&
         game_->migration().add_standby(uint32_t(player),{address.utf8().get_data(),uint16_t(port)});
+}
+bool NetcodeGame::add_provider_standby(int64_t player, const String& endpoint) {
+    return available() && !stepping_ && provider_game_ && player > 0 && player <= UINT32_MAX &&
+        game_->migration().add_standby(uint32_t(player), {{}, 0, endpoint.utf8().get_data()});
 }
 bool NetcodeGame::handoff() { return available() && !stepping_ && game_->migration().handoff(); }
 int NetcodeGame::migration_phase() const { return game_ ? int(game_->migration().phase()) : int(netcode::MigrationPhase::Ended); }
@@ -337,6 +412,8 @@ void NetcodeGame::close() {
     if (available())
         game_->session().end(netcode::Clock::now());
     game_.reset();
+    provider_game_ = false;
+    transport_build_ = String();
     writable_.clear();
     handlers_.clear();
     array_handlers_.clear();

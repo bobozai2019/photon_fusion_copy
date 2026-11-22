@@ -2,6 +2,7 @@
 
 #include "2d/CCComponent.h"
 #include "session/script_game.hpp"
+#include "host/game.hpp"
 
 namespace netcode::cocos {
 
@@ -9,7 +10,13 @@ namespace netcode::cocos {
 class GameComponent final : public cocos2d::Component {
   public:
     static GameComponent* create(std::unique_ptr<ScriptGame> game);
+    static GameComponent* create_with_provider(std::string_view endpoint, SessionOptions options,
+                                               const ReplicationLayout& layout, const ProviderConfig& provider = {});
     static const char* platform_build_id() noexcept;
+    const ProviderIdentity& transport_identity() const { return provider_; }
+    bool add_provider_standby(PlayerId player, std::string endpoint) {
+        return provider_.abi && game_->migration().add_standby(player, {{}, 0, std::move(endpoint)});
+    }
     std::weak_ptr<ScriptGame> session_handle() const { return game_; }
     using ReplicaNodes = std::map<ObjectId,cocos2d::Node*>;
     std::shared_ptr<ReplicaNodes> replica_nodes() const { return nodes_; }
@@ -59,6 +66,7 @@ class GameComponent final : public cocos2d::Component {
         fn(sender,object,std::get<Args>(fields[I])...);
     }
     std::shared_ptr<ScriptGame> game_;
+    ProviderIdentity provider_{"direct"};
     std::shared_ptr<ReplicaNodes> nodes_=std::make_shared<ReplicaNodes>();
     std::map<MethodId,MethodHandler> methods_;
 };

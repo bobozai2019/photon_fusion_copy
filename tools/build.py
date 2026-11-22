@@ -1,4 +1,4 @@
-"""Build, install and optionally package one Windows x64 SDK and its Core dependency."""
+"""Build, install and optionally package a Windows x64 SDK or the standalone TCP provider."""
 import argparse
 from contextlib import contextmanager
 import gzip
@@ -16,8 +16,9 @@ from godot_build import CPP_TAG, sdk_sources
 from sdk_packages import publish, sha256
 
 REPO = ROOT.parent
-SOURCES = {"core": "core", "godot": "engineplatform/godot",
+SOURCES = {"core": "core", "transport-tcp": "network/tcp", "godot": "engineplatform/godot",
            "cocos": "engineplatform/cocos2dx", "unity": "engineplatform/unity"}
+PLATFORMS = ("godot", "cocos", "unity")
 
 
 def cmake_executable():
@@ -128,12 +129,18 @@ def build_and_install(product, args, install, cmake, config, build_dir):
         flags.append("-DNETCODE_STEAM=" + ("ON" if args.steam_sdk else "OFF"))
         if args.steam_sdk:
             flags.append(f"-DNETCODE_STEAMWORKS_ROOT={args.steam_sdk.resolve()}")
+    elif product == "transport-tcp":
+        flags.append(f"-DNETCODE_TRANSPORT_INCLUDE={REPO / 'network/api'}")
     else:
         core = (args.core_prefix or install / "core").resolve()
         core_config = core / "lib/cmake/NetcodeCore"
         if not (core_config / "NetcodeCoreConfig.cmake").is_file():
             raise FileNotFoundError(f"Missing installed Core SDK: {core}")
         flags.append(f"-DNetcodeCore_DIR={core_config}")
+        tcp = install / "transport-tcp/bin/netcode_transport_tcp.dll"
+        if not tcp.is_file():
+            raise FileNotFoundError(f"Missing installed TCP transport: {tcp}")
+        flags.append(f"-DNETCODE_TCP_MODULE={tcp}")
     if product == "godot":
         cpp = args.godot_cpp
         if not cpp:
@@ -189,13 +196,15 @@ def main():
     parser.add_argument("--physics3d", choices=["ON", "OFF"], default="ON")
     parser.add_argument("--steam-sdk", type=Path, help="Enable optional Steam transport in Core")
     args = parser.parse_args()
-    if args.jobs < 1 or (args.core_prefix and args.product in ("all", "core")):
+    if args.jobs < 1 or (args.core_prefix and args.product not in PLATFORMS):
         parser.error("Use positive --jobs and reserve --core-prefix for a single platform")
     ROOT.mkdir(exist_ok=True)
     install = item_at(ROOT, Path("install/win-x64-msvc-mt") / args.config)
     products = list(SOURCES) if args.product == "all" else [args.product]
-    if not args.core_prefix and "core" not in products:
-        products.insert(0, "core")
+    if args.product in PLATFORMS:
+        products.insert(0, "transport-tcp")
+        if not args.core_prefix:
+            products.insert(0, "core")
     cmake = args.cmake or cmake_executable()
     with sdk_lock():
         for product in products:

@@ -30,14 +30,23 @@ func add_spawnable_scene(scene: PackedScene) -> bool:
     return true
 
 func open(host: bool, address: String, port: int, capacity := 4) -> String:
+    return _open_room(host, false, func() -> String:
+        return room.open(null, host, address, port, capacity, spawnable_scenes))
+
+func open_with_provider(host: bool, endpoint: String, capacity := 4, provider := "tcp", module := "",
+        config := PackedByteArray(), resume := PackedByteArray(), keep_seats := true) -> String:
+    return _open_room(host, keep_seats, func() -> String:
+        return room.open_with_provider(null, host, endpoint, capacity, spawnable_scenes, false,
+            provider, module, config, resume))
+
+func _open_room(host: bool, keep_seats: bool, connect_room: Callable) -> String:
     if _connected: return "房间已打开"
     _parent = get_node_or_null(spawn_path)
     if not is_inside_tree() or not _parent or spawnable_scenes.is_empty(): return "请设置生成位置和场景模板"
     # Only the catalog belongs to this room. Other spawners can share the scene tree.
-    var error := room.open(null, host, address, port, capacity, spawnable_scenes)
+    var error: String = connect_room.call()
     if not error.is_empty(): return error
-    # Joining through this component creates a fresh player. Free the seat on disconnect.
-    if host and not room.game.set_player_ttl(0):
+    if host and not keep_seats and not room.game.set_player_ttl(0):
         room.close()
         return "无法配置离房席位回收"
     for scene in spawnable_scenes:

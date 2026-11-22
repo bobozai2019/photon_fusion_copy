@@ -9,10 +9,19 @@ set(GODOTCPP_BUILD_PROFILE "${CMAKE_CURRENT_SOURCE_DIR}/build_profile.json")
 set(GODOTCPP_DISABLE_EXCEPTIONS OFF)
 add_subdirectory("${NETCODE_GODOT_CPP}" godot-cpp EXCLUDE_FROM_ALL)
 add_library(netcode_godot SHARED game.cpp register_types.cpp)
-target_link_libraries(netcode_godot PRIVATE godot::cpp Netcode::Direct)
+target_link_libraries(netcode_godot PRIVATE godot::cpp Netcode::Direct Netcode::TransportHost)
 netcode_build_id(platform_id "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_definitions(netcode_godot PRIVATE NETCODE_PLATFORM_BUILD_ID="${platform_id}")
 set(addon addons/netcode)
+set(NETCODE_TCP_MODULE "" CACHE FILEPATH "Built default Windows TCP provider")
+if(NETCODE_TCP_MODULE)
+    set(tcp_export [=[
+[dependencies]
+
+windows.x86_64 = { "res://addons/netcode/bin/netcode_transport_tcp.dll": "" }
+]=])
+    install(FILES "${NETCODE_TCP_MODULE}" DESTINATION ${addon}/bin RENAME netcode_transport_tcp.dll)
+endif()
 configure_file(netcode.gdextension.in netcode.gdextension @ONLY)
 install(TARGETS netcode_godot RUNTIME DESTINATION ${addon}/bin LIBRARY DESTINATION ${addon}/bin)
 file(GLOB scripts CONFIGURE_DEPENDS "*.gd" "*.gd.uid")

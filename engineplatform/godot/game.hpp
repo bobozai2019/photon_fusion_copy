@@ -13,6 +13,13 @@ class NetcodeGame final : public godot::RefCounted {
     static bool validate_layout(const godot::String& config);
     godot::String open(const godot::String &config, bool host, const godot::String &address, int port,
                        int capacity, bool watch);
+    godot::String open_with_provider(const godot::String& layout, bool host, const godot::String& endpoint,
+                                    int capacity, bool watch, const godot::String& provider,
+                                    const godot::String& module, const godot::PackedByteArray& config,
+                                    const godot::PackedByteArray& resume);
+    godot::String transport_build_id() const { return transport_build_; }
+    godot::Dictionary transport_stats();
+    godot::PackedByteArray resume_ticket();
     bool model(int schema, const godot::PackedInt32Array &fields, int policy, int cooldown);
     godot::Dictionary advance();
     godot::Dictionary routing_info(int64_t object, bool audience);
@@ -20,6 +27,7 @@ class NetcodeGame final : public godot::RefCounted {
 
     bool start();
     bool add_standby(int64_t player,const godot::String& address,int port);
+    bool add_provider_standby(int64_t player, const godot::String& endpoint);
     bool handoff();
     int migration_phase() const;
     void close();
@@ -74,6 +82,8 @@ class NetcodeGame final : public godot::RefCounted {
     std::map<int,godot::Callable> handlers_;
     std::set<int> array_handlers_;
     bool stepping_ = false;
+    bool provider_game_ = false;
+    godot::String transport_build_;
     std::unique_ptr<netcode::ScriptGame> game_;
     std::map<int, std::vector<netcode::Field>> writable_;
 };

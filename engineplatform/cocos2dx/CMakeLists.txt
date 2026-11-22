@@ -26,7 +26,11 @@ string(SHA256 physics_id "${platform_id}/${physics2d}/${physics3d}")
 string(SUBSTRING "${physics_id}" 0 16 platform_id)
 target_compile_definitions(netcode_cocos PRIVATE CC_STATIC CC_USE_PHYSICS=${physics2d} CC_USE_3D_PHYSICS=${physics3d}
     NETCODE_PLATFORM_BUILD_ID="${platform_id}")
-target_link_libraries(netcode_cocos PUBLIC Netcode::Direct "$<INSTALL_INTERFACE:cocos2d>")
+target_link_libraries(netcode_cocos PUBLIC Netcode::Direct Netcode::TransportHost "$<INSTALL_INTERFACE:cocos2d>")
+set(NETCODE_TCP_MODULE "" CACHE FILEPATH "Built default Windows TCP provider")
+if(NETCODE_TCP_MODULE)
+    install(FILES "${NETCODE_TCP_MODULE}" DESTINATION bin RENAME netcode_transport_tcp.dll)
+endif()
 install(TARGETS netcode_cocos EXPORT NetcodeCocosTargets ARCHIVE DESTINATION lib)
 install(FILES game_component.hpp replica_component.hpp forecast_body.hpp forecast_body_3d.hpp physics_island_3d.hpp
     "${CMAKE_CURRENT_BINARY_DIR}/netcode_cocos_config.hpp" DESTINATION include/netcode/cocos)

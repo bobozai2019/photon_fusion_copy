@@ -23,6 +23,13 @@ namespace Netcode
         const string Plugin = "netcode_unity";
         const CallingConvention ABI = CallingConvention.Cdecl;
         [DllImport(Plugin, CallingConvention=ABI)] static extern IntPtr ng_open([MarshalAs(UnmanagedType.LPUTF8Str)] string config, int host, [MarshalAs(UnmanagedType.LPUTF8Str)] string address, int port, int capacity, int spectator);
+        [DllImport(Plugin, CallingConvention=ABI)] static extern IntPtr ng_open_with_provider(
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string layout, int host,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string endpoint, int capacity, int spectator,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string provider, [MarshalAs(UnmanagedType.LPUTF8Str)] string module,
+            byte[] config, int configSize, byte[] resume, int resumeSize);
+        [DllImport(Plugin, CallingConvention=ABI)] static extern IntPtr ng_transport_build_id(IntPtr game);
+        [DllImport(Plugin, CallingConvention=ABI)] static extern int ng_resume_ticket(IntPtr game, [Out] byte[] ticket, int capacity);
         [DllImport(Plugin, CallingConvention=ABI)] static extern IntPtr ng_error();
         [DllImport(Plugin, CallingConvention=ABI)] static extern void ng_close(IntPtr game);
         [DllImport(Plugin, CallingConvention=ABI)] static extern int ng_model(IntPtr game, ushort schema, ushort[] fields, int count, int policy, uint cooldown);
@@ -45,6 +52,7 @@ namespace Netcode
         [DllImport(Plugin, CallingConvention=ABI)] static extern IntPtr ng_core_build_id();
         [DllImport(Plugin, CallingConvention=ABI)] static extern IntPtr ng_platform_build_id();
         public static string SdkBuildId => Marshal.PtrToStringAnsi(ng_core_build_id()) + "/" + Marshal.PtrToStringAnsi(ng_platform_build_id());
+        public string TransportBuildId => Marshal.PtrToStringUTF8(ng_transport_build_id(Handle));
 
         IntPtr handle;
         public bool IsHost { get { Status(out _,out int host,out _,out _); return host!=0; } }
@@ -54,10 +62,13 @@ namespace Netcode
         public MigrationPhase Phase => Status(out _,out _,out _,out _);
         [DllImport(Plugin, CallingConvention=ABI)] static extern int ng_migration(IntPtr game,out uint term,out int host,out uint saved,out int armed);
         [DllImport(Plugin, CallingConvention=ABI)] static extern int ng_standby(IntPtr game,uint player,[MarshalAs(UnmanagedType.LPUTF8Str)] string address,int port);
+        [DllImport(Plugin, CallingConvention=ABI)] static extern int ng_provider_standby(
+            IntPtr game, uint player, [MarshalAs(UnmanagedType.LPUTF8Str)] string endpoint);
         [DllImport(Plugin, CallingConvention=ABI)] static extern int ng_handoff(IntPtr game);
         MigrationPhase Status(out uint term,out int host,out uint saved,out int armed)
             => (MigrationPhase)ng_migration(Handle,out term,out host,out saved,out armed);
         public bool AddStandby(uint player,string address,int port) => ng_standby(Handle,player,address,port)==1;
+        public bool AddProviderStandby(uint player, string endpoint) => ng_provider_standby(Handle, player, endpoint) == 1;
         public bool Handoff() => ng_handoff(Handle)==1;
         readonly Dictionary<ushort, HashSet<ushort>> writable = new Dictionary<ushort, HashSet<ushort>>();
         readonly byte[] buffer = new byte[1176];
@@ -203,6 +214,22 @@ namespace Netcode
         {
             handle = ng_open(config, host ? 1 : 0, address, port, capacity, spectator ? 1 : 0);
             if (handle == IntPtr.Zero) throw new InvalidOperationException(Marshal.PtrToStringAnsi(ng_error()));
+        }
+        NetcodeGame(IntPtr nativeHandle)
+        {
+            handle = nativeHandle;
+            if (handle == IntPtr.Zero) throw new InvalidOperationException(Marshal.PtrToStringUTF8(ng_error()));
+        }
+        public static NetcodeGame OpenWithProvider(string layout, bool host, string endpoint,
+            int capacity = 4, bool spectator = false, string provider = "tcp", string module = null,
+            byte[] config = null, byte[] resume = null)
+            => new NetcodeGame(ng_open_with_provider(layout, host ? 1 : 0, endpoint, capacity, spectator ? 1 : 0,
+                provider, module, config, config?.Length ?? 0, resume, resume?.Length ?? 0));
+
+        public byte[] ResumeTicket()
+        {
+            var ticket = new byte[36];
+            return ng_resume_ticket(Handle, ticket, ticket.Length) == ticket.Length ? ticket : Array.Empty<byte>();
         }
         public void Dispose() {
             if (stepping) throw new InvalidOperationException("Simulation callbacks must be pure");

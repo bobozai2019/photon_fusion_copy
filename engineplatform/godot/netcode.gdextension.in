@@ -6,5 +6,4 @@ compatibility_minimum = "4.5"
 [libraries]
 
 windows.x86_64 = "bin/netcode_godot.dll"
-
-
+@tcp_export@

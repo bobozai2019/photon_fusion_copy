@@ -1,14 +1,18 @@
 #include "session/direct_game.hpp"
 #include "build_info.hpp"
+#include "host/game.hpp"
 #include <algorithm>
 #include <sstream>
 
 using namespace netcode;
 namespace {
+const char module_anchor = 0;
 struct Binding {
     std::unique_ptr<ScriptGame> script;
     std::deque<ScriptEvent> events;
     std::deque<RpcOutcome> outcomes;
+    ProviderIdentity provider{"direct"};
+    std::string transport_build = "direct";
 };
 struct GameFrame {
     std::uint64_t round;
@@ -16,6 +20,14 @@ struct GameFrame {
     double time, rtt, rate, offset;
 };
 thread_local std::string error;
+SessionOptions game_options(int host, int watch, int capacity) {
+    SessionOptions options;
+    options.host = host != 0;
+    options.spectator = watch != 0;
+    options.extended_join = true;
+    options.admission = {static_cast<uint8_t>(capacity), true, true};
+    return options;
+}
 template <class F> int guarded(F f) noexcept {
     try {
         return f();
@@ -50,18 +62,52 @@ NG_API Binding* ng_open(const char* config, int host, const char* address, int p
     guarded([&] {
         std::istringstream stream(config);
         ReplicationLayout layout(stream);
-        SessionOptions options;
-        options.host = host != 0;
-        options.spectator = watch != 0;
-        options.extended_join = true;
-        options.admission = {static_cast<uint8_t>(capacity), true, true};
         DirectConfig direct{address, static_cast<uint16_t>(port)};
-        auto script = open_direct_game(direct,options,layout);
+        auto script = open_direct_game(direct,game_options(host,watch,capacity),layout);
         result = std::make_unique<Binding>();
         result->script = std::move(script);
         return 1;
     });
     return result.release();
+}
+NG_API Binding* ng_open_with_provider(const char* text, int host, const char* endpoint, int capacity, int watch,
+                                     const char* provider, const char* module, const uint8_t* config, int config_size,
+                                     const uint8_t* resume, int resume_size) noexcept {
+    if (!text || !endpoint || !provider || capacity < 1 || capacity > 255 ||
+        config_size < 0 || resume_size < 0 || (config_size && !config) || (resume_size && !resume)) {
+        error = "Invalid session options";
+        return nullptr;
+    }
+    std::unique_ptr<Binding> binding;
+    guarded([&] {
+        std::istringstream stream(text);
+        ReplicationLayout layout(stream);
+        auto options = game_options(host,watch,capacity);
+        if (resume_size) options.resume = decode_resume_ticket(resume, resume_size);
+        const ProviderConfig settings{provider, std::filesystem::u8path(module ? module : ""),
+            config_size ? std::string(reinterpret_cast<const char*>(config), config_size) : std::string{}};
+        auto opened = open_provider_game(settings, endpoint, options, layout, &module_anchor);
+        auto result = std::make_unique<Binding>();
+        result->provider = std::move(opened.provider);
+        result->transport_build = result->provider.label();
+        result->script = std::move(opened.game);
+        binding = std::move(result);
+        return 1;
+    });
+    return binding.release();
+}
+NG_API const char* ng_transport_build_id(Binding* b) noexcept {
+    return b ? b->transport_build.c_str() : "";
+}
+NG_API int ng_resume_ticket(Binding* b, uint8_t* out, int capacity) noexcept {
+    return guarded([&] {
+        auto* game = b ? b->script->active() : nullptr;
+        if (!game || !game->guest()) return 0;
+        const auto bytes = encode_resume_ticket(game->guest()->ticket());
+        if (!out || capacity < 0 || static_cast<size_t>(capacity) < bytes.size()) return 0;
+        std::copy(bytes.begin(), bytes.end(), out);
+        return static_cast<int>(bytes.size());
+    });
 }
 NG_API void ng_close(Binding* b) noexcept {
     if (b && b->script->active())
@@ -82,8 +128,12 @@ NG_API int ng_model(Binding* b, SchemaId schema, const FieldId* fields, int coun
     });
 }
 NG_API int ng_standby(Binding* b,PlayerId player,const char* address,int port) noexcept {
-    return guarded([&]{return int(address && port>0 && port<=65535 &&
+    return guarded([&]{return int(b && !b->provider.abi && address && port>0 && port<=65535 &&
         b->script->migration().add_standby(player,{address,uint16_t(port)}));});
+}
+NG_API int ng_provider_standby(Binding* b, PlayerId player, const char* endpoint) noexcept {
+    return guarded([&] { return int(b && b->provider.abi && endpoint &&
+        b->script->migration().add_standby(player, {{}, 0, endpoint})); });
 }
 NG_API int ng_handoff(Binding* b) noexcept { return guarded([&]{return int(b->script->migration().handoff());}); }
 NG_API int ng_migration(Binding* b,uint32_t* term,int* host,Tick* saved,int* armed) noexcept {

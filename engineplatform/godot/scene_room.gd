@@ -44,6 +44,15 @@ static func collect_replicas(node:Node, found:Array) -> void:
 
 ## Replicas in the scene and optional spawn templates form the pre-round catalog.
 func open(root:Node,host:bool,address:String,port:int,capacity:int=4,templates:Array[PackedScene]=[],watch:bool=false) -> String:
+    return _open_room(root,templates,func(text:String) -> String: return game.open(text,host,address,port,capacity,watch))
+
+func open_with_provider(root:Node,host:bool,endpoint:String,capacity:int=4,templates:Array[PackedScene]=[],
+        watch:bool=false,provider:String="tcp",module:String="",config:PackedByteArray=PackedByteArray(),
+        resume:PackedByteArray=PackedByteArray()) -> String:
+    return _open_room(root,templates,func(text:String) -> String:
+        return game.open_with_provider(text,host,endpoint,capacity,watch,provider,module,config,resume))
+
+func _open_room(root:Node,templates:Array[PackedScene],connect_room:Callable) -> String:
     if _open or (root==null and templates.is_empty()): return "A new room and a scene root or spawn templates are required"
     var replicas:Array=[]
     if root: collect_replicas(root,replicas)
@@ -82,7 +91,7 @@ func open(root:Node,host:bool,address:String,port:int,capacity:int=4,templates:A
     if _layouts.is_empty(): return _abort("No replicated objects or annotated broadcast methods",[])
     var text:=""
     for layout:String in _layouts.values(): text+=layout
-    var error:=game.open(text,host,address,port,capacity,watch)
+    var error:String=connect_room.call(text)
     if not error.is_empty(): return _abort(error,[])
     for layout:Dictionary in _actors.values():
         if not layout.writable.is_empty() and not game.model(layout.id,layout.writable,MODEL_PLAYER_ATTACHED if layout.player_attached else MODEL_TRANSACTION,0):

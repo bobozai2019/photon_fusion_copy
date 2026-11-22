@@ -1,0 +1,30 @@
+fileFormatVersion: 2
+guid: cbe8be042a9d4250a6825397cc3e37d7
+PluginImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defineConstraints: []
+  isPreloaded: 0
+  isOverridable: 0
+  platformData:
+  - first:
+      Any:
+    second:
+      enabled: 0
+      settings: {}
+  - first:
+      Editor: Editor
+    second:
+      enabled: 1
+      settings:
+        CPU: x86_64
+        OS: Windows
+  - first:
+      Standalone: Win64
+    second:
+      enabled: 1
+      settings:
+        CPU: x86_64
+  userData:
+  assetBundleName:
+  assetBundleVariant:
