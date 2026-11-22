@@ -1,32 +1,60 @@
 """Apply the property line's per-cell verdict to pinned native A/B/C and Fusion evidence."""
 import argparse
 from collections import defaultdict
-from hashlib import file_digest
+from hashlib import sha256
 import json
 from pathlib import Path
 import sys
 
 
-def read(path):
-    return [json.loads(row) for row in path.read_text(encoding="utf-8").splitlines() if row.strip()]
+def read(data):
+    return [json.loads(row) for row in data.decode("utf-8-sig").splitlines() if row.strip()]
 
 
-def evaluate(native, reference, verdict):
+def evaluate(native, reference, verdict, baseline_sha=None):
     rooms = defaultdict(lambda: defaultdict(list))
     builds = defaultdict(set)
+    native_keys = set()
     for record in native:
         variant = record["variant"]
         if variant not in ("A", "B", "C"):
             raise ValueError(f"Unexpected variant {variant}")
         builds[variant].add(record["sdk_sha256"])
         cell = record["fields"], record["workload"]
-        rooms[cell][variant].append({"metrics": record.get("result", {"correct": False})})
+        key = (variant, *cell, record["trial"])
+        if key in native_keys:
+            raise ValueError(f"Duplicate native room {key}")
+        native_keys.add(key)
+        metrics = record.get("result", {"correct": False})
+        if metrics["correct"]:
+            owner, remote = metrics["owner_transport"], metrics["remote_transport"]
+            expected = owner.startswith("tcp/") if variant == "C" else owner == "direct"
+            if owner != remote or not expected:
+                raise ValueError(f"Unexpected providers in {key}: {owner!r}, {remote!r}")
+        rooms[cell][variant].append({"metrics": metrics})
+
+    reference_keys = set()
+    measured_a = bool(builds["A"])
     for record in reference:
-        if record["product"] == "fusion" and record["width"] == 20:
-            builds["fusion"].add(record["build"])
-            rooms[record["properties"], record["workload"]]["fusion"].append(record)
+        if record["width"] != 20:
+            continue
+        product = record["product"]
+        if product == "candidate" and not measured_a:
+            product = "A"
+        elif product not in ("old", "fusion"):
+            continue
+        cell = record["properties"], record["workload"]
+        key = (product, *cell, record["repeat"])
+        if key in reference_keys:
+            raise ValueError(f"Duplicate reference room {key}")
+        reference_keys.add(key)
+        builds[product].add(record["build"])
+        rooms[cell][product].append(record)
+
     if any(len(fingerprints) > 1 for fingerprints in builds.values()):
         raise ValueError("A variant changed builds during the matrix")
+    if baseline_sha and builds["A"] != {baseline_sha}:
+        raise ValueError("A does not match the fixed optimized Direct SDK hash")
     if builds["B"] != builds["C"]:
         raise ValueError("B and C require the same candidate SDK hash")
 
@@ -37,7 +65,7 @@ def evaluate(native, reference, verdict):
             seen = rooms[fields, workload]
             results = {
                 variant: verdict.cell_verdict(fields, workload,
-                                              {"old": seen["A"], "candidate": seen[variant], "fusion": seen["fusion"]})
+                                              {"old": seen["old"], "candidate": seen[variant], "fusion": seen["fusion"]})
                 for variant in variants
             }
             cells.append({"fields": fields, "workload": workload, "variants": results,
@@ -46,7 +74,9 @@ def evaluate(native, reference, verdict):
                                               if item not in results["A"]["failures"]],
                           "added_by_tcp": [item for item in results["C"]["failures"]
                                            if item not in results["B"]["failures"]]})
-    return {"builds": {key: next(iter(value), None) for key, value in builds.items()}, "cells": cells,
+    return {"builds": {key: next(iter(value), None) for key, value in builds.items()},
+            "A_source": "transport-run" if measured_a else "property-reference",
+            "cells": cells,
             "tcp_release_passes": all(cell["variants"]["C"]["status"] == "pass" for cell in cells)}
 
 
@@ -54,13 +84,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--probes", type=Path, required=True)
     parser.add_argument("--native", type=Path, required=True)
-    parser.add_argument("--fusion", type=Path, required=True)
+    parser.add_argument("--reference", "--fusion", dest="reference", type=Path, required=True,
+                        help="Property-line matrix with the old release, optimized Direct and Fusion cohorts")
+    parser.add_argument("--baseline-sha", help="SHA-256 of the fixed optimized Direct archive")
     args = parser.parse_args()
     sys.path.insert(0, str(args.probes.resolve()))
     import property_verdict
-    result = evaluate(read(args.native), read(args.fusion), property_verdict)
-    with args.fusion.open("rb") as evidence:
-        result["fusion_evidence_sha256"] = file_digest(evidence, "sha256").hexdigest()
+    reference = args.reference.read_bytes()
+    result = evaluate(read(args.native.read_bytes()), read(reference), property_verdict, args.baseline_sha)
+    result["property_reference_sha256"] = sha256(reference).hexdigest()
     print(json.dumps(result, indent=2))
     return 0 if result["tcp_release_passes"] else 1
 
