@@ -58,5 +58,3 @@ def publish(root, work, staged, *, slot=SLOT, package=PACKAGE):
     if not moved_current and old_previous:
         rollback.rename(previous)
     return True
-
-

@@ -4,7 +4,7 @@
 
 Godot 4 接入独立登记，沿用 Cocos2d-x 的 M0–M6 门槛。[Godot 接入计划](../task/godot-platform/总纲.md) · [Godot 执行状态](../task/godot-platform/执行状态.md)
 
-传输改造已固定 SDK 源码基线，并通过 Windows x64 C ABI、独立 Core 及旧新版 Direct 双向互通。三端消费和属性性能按各自关口登记。[传输改造方案](../task/transport-providers/改造方案.md) · [执行状态与复现入口](../task/transport-providers/执行状态.md)
+可替换传输已通过 Windows x64 的 G1–G4 验收。新会话默认使用纯 TCP，三个引擎均完成外部 DLL 替换、重连和双向 RPC。Direct 通过跨版本互通，三版性能各过 15 格。[传输改造方案](../task/transport-providers/改造方案.md) · [执行状态与复现入口](../task/transport-providers/执行状态.md)
 
 ## 当前活动项 · property-binding
 
