@@ -218,6 +218,7 @@ int ScriptGame::sync_replica(ObjectId id,const Values& sample,Values& applied,bo
         applied=std::move(baseline);
         return 2;
     }
+    it->second.received_revision.reset();
     auto& previous=it->second.previous;
     if (g->local()!=writer) {
         auto next=g->writers().presentation(*obj).values;
@@ -241,6 +242,49 @@ int ScriptGame::sync_replica(ObjectId id,const Values& sample,Values& applied,bo
     previous=std::move(next);
     return applied.empty() ? 0 : 1;
 }
+int ScriptGame::receive_replica(ObjectId id, Values& applied, std::uint64_t& mask) {
+    applied.clear();
+    mask = 0;
+    auto* game = active();
+    const auto* object = game ? game->object(id) : nullptr;
+    if (!object || !game->round()) {
+        replicas_.erase(id);
+        return 0;
+    }
+    auto& authority = game->writers();
+    const auto* grant = authority.grant(id);
+    const auto writer = grant ? grant->writer : authority.writer(id);
+    if (writer == game->local()) return 0;
+    const auto epoch = grant ? grant->epoch : 0;
+    auto it = replicas_.find(id);
+    const bool baseline = it == replicas_.end() || it->second.round != game->round() ||
+                          it->second.writer != writer || it->second.epoch != epoch;
+    // A pending grant can change the presented value without a new snapshot revision.
+    const bool canonical = game->host() || (authority.presentation_writer(id) != game->local() &&
+                          (!grant || object->revision >= grant->baseline_revision));
+    if (!baseline && canonical && it->second.received_revision == object->revision) return 0;
+
+    std::optional<Object> presented;
+    if (!canonical) presented = authority.presentation(*object);
+    const auto& fields = presented ? presented->values : object->values;
+    const auto revision = canonical ? std::optional<Tick>(object->revision) : std::nullopt;
+    if (baseline) {
+        for (std::size_t i = 0; i < fields.size(); ++i) mask |= std::uint64_t{1} << i;
+        replicas_[id] = {game->round(), writer, epoch, fields, revision};
+        applied = fields;
+        return 2;
+    }
+    auto& cursor = it->second;
+    cursor.received_revision = revision;
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        if (fields[i] == cursor.previous[i]) continue;
+        mask |= std::uint64_t{1} << i;
+        applied.push_back(fields[i]);
+        cursor.previous[i] = fields[i];
+    }
+    return mask ? 1 : 0;
+}
+
 bool ScriptGame::submit_fields(ObjectId id,const Values& full) {
     if (!active()) return false;
     const auto* obj=session().object(id);

@@ -1,6 +1,7 @@
 #pragma once
 #include "session/migration.hpp"
 #include "state/layout.hpp"
+#include <optional>
 
 namespace netcode {
 
@@ -47,6 +48,8 @@ class ScriptGame {
     bool model(SchemaId schema, std::vector<FieldId> writable, ClaimMode policy, Tick cooldown);
     // One mounted publisher per local object. 2 = install baseline, 1 = apply update, 0 = no application.
     int sync_replica(ObjectId id,const Values& sample,Values& applied,bool forecast=false);
+    // Returns changed observer values in mask order, or a full baseline on rebind.
+    int receive_replica(ObjectId id, Values& applied, std::uint64_t& mask);
     void unbind_replica(ObjectId id) { replicas_.erase(id); }
     bool submit_fields(ObjectId id,const Values& full);
     bool submit(ObjectId id, const Values& fields);
@@ -75,6 +78,7 @@ class ScriptGame {
         PlayerId writer;
         Tick epoch;
         Values previous;
+        std::optional<Tick> received_revision = std::nullopt;
     };
     std::map<ObjectId,ReplicaCursor> replicas_;
     struct Signature { SchemaId schema; uint32_t hash; };
