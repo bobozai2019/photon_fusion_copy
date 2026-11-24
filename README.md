@@ -9,8 +9,8 @@
 Godot 玩法可以直接使用原生 `@rpc` 注解，并在 Replicator 上选择要同步的属性。场景接入路径会生成字段和方法布局。[Godot 声明式接入](docs/specs/godot-scene-sync.md)
 
 1. **声明要同步的数据。** 在模板中给字段分配稳定编号。当前支持 16 类字段，包括位置、旋转、颜色、房内对象引用和有容量上限的集合。[字段类型与容量](docs/specs/property-binding.md#配置与字段值)
-2. **登记客户写权。** 在各端开局前注册对象模型，列出允许客人提交的字段号。控制台同步八个字段，只把分数字段 1 列为可写。客人持续推进会话，取得授权后才修改分数。[控制台接入顺序](../examples/puzzle/README.md#通用玩法控制台)
-3. **注册玩法方法。** 在开局前为 RPC 声明名称、方法号、参数模板和调用权限。控制台示例中，客人获权后把分数从 7 改为 42，并调用 `Report`。房主读到新分数、核对参数后，用 `Done` 确认处理完成。[可运行的控制台示例](../examples/puzzle/README.md#通用玩法控制台)
+2. **登记客户写权。** 在各端开局前注册对象模型，列出允许客人提交的字段号。控制台同步八个字段，只把分数字段 1 列为可写。客人持续推进会话，取得授权后才修改分数。[控制台接入顺序](https://github.com/bobozai2019/netcode_example/blob/main/puzzle/README.md#通用玩法控制台)
+3. **注册玩法方法。** 在开局前为 RPC 声明名称、方法号、参数模板和调用权限。控制台示例中，客人获权后把分数从 7 改为 42，并调用 `Report`。房主读到新分数、核对参数后，用 `Done` 确认处理完成。[可运行的控制台示例](https://github.com/bobozai2019/netcode_example/blob/main/puzzle/README.md#通用玩法控制台)
 4. **挂载组件并绑定对象。** 在 Godot、Unity 或 Cocos2d-x 中把场景实例绑定到同一局的对象号。组件在写者一侧采集变化，在观察者一侧应用状态；写权交接时先恢复基线。[三端组件入口](docs/specs/game-session.md#玩法字段命名调用与挂载组件)
 
 Windows x64 本机已分别验收三种引擎的房主与客人。控制台覆盖八个实际字段、对象引用解析、二维与三维刚体，以及双向命名 RPC。车场另有写权交接、断线接回原车和四人百对象用例。[控制台验收](task/gameplay-components/验收/本机.md) · [车场验收](task/cross-engine-sync/验收/M6.md)
@@ -53,13 +53,25 @@ python -B tools/build.py unity --core-prefix out/install/win-x64-msvc-mt/Release
 
 开发安装都在 `out/install/win-x64-msvc-mt/<配置>/<产品>/`。平台开发时运行 `python -B tools/build.py godot` 等命令即可联动 Core。已有 Core 或外部 Core 使用 `--core-prefix` 指向解压目录。原生构建树按产品隔离，`current/previous` 保留当前与上一发布包。同机多份 SDK 可通过平台的 build ID 与 Core build ID 识别。SDK 版本描述接口，CRT、位宽和配置决定二进制可用性，房间握手另行检查联网协议版本。
 
-外部消费与迁移结果见[验收记录](docs/sdk-validation.md)。游戏源码、启动、验收和游戏包见[示例仓库](../examples/README.md)。
+外部消费与迁移结果见[验收记录](docs/sdk-validation.md)。
+
+## 示例索引
+
+示例源码、运行说明和验收工具由独立仓库维护。已有本框架仓库时，从其根目录执行 `git clone https://github.com/bobozai2019/netcode_example.git ../examples`，示例脚本会按默认布局从同级框架仓库查找 SDK。[示例仓库与运行说明](https://github.com/bobozai2019/netcode_example)
+
+| 示例 | 用途 |
+| --- | --- |
+| 车场 `yard` | 三引擎驾驶、大厅、写权交接和断线接回。[Godot](https://github.com/bobozai2019/netcode_example/tree/main/yard/godot) · [Unity](https://github.com/bobozai2019/netcode_example/tree/main/yard/unity) · [Cocos2d-x](https://github.com/bobozai2019/netcode_example/tree/main/yard/cocos2dx) |
+| 拼图 `puzzle` | 三进程写权交接、兴趣区和控制台 RPC。[运行说明](https://github.com/bobozai2019/netcode_example/tree/main/puzzle) |
+| Shiftline `shiftline` | Godot 局域网 FPS、房间和多人玩法。[运行说明](https://github.com/bobozai2019/netcode_example/tree/main/shiftline) |
+| 同步试验场 `sync-lab` | 两个 Godot 客户端观察字段复制和 AOI 切换。[运行说明](https://github.com/bobozai2019/netcode_example/tree/main/sync-lab) |
+| 属性采样 `position-replicator` | Godot C++ 属性采样、差量复制和重传。[运行说明](https://github.com/bobozai2019/netcode_example/tree/main/position-replicator) |
 
 ## 仓库导航
 
 [架构技术文档](docs/architecture.md)涵盖模块、协议、对象生命周期、RPC、重连和验收。
 
-第二套引擎接入使用 Godot 4 GDExtension。Godot 与 Cocos 样例从同一 C++ 目标获取房间、TCP/UDP、模拟和复制，沿用同一验收脚本。[Godot 构建和操作](../examples/yard/godot/README.md) · [Godot 接入任务](task/godot-platform/总纲.md)
+第二套引擎接入使用 Godot 4 GDExtension。Godot 与 Cocos 样例从同一 C++ 目标获取房间、TCP/UDP、模拟和复制，沿用同一验收脚本。[Godot 构建和操作](https://github.com/bobozai2019/netcode_example/tree/main/yard/godot) · [Godot 接入任务](task/godot-platform/总纲.md)
 
 | 路径 | 在这里维护什么 |
 | --- | --- |
@@ -71,6 +83,6 @@ python -B tools/build.py unity --core-prefix out/install/win-x64-msvc-mt/Release
 | [engineplatform/](engineplatform/) | Godot、Unity、Cocos2d-x 适配器，负责组件、节点寿命及引擎属性的采集与应用 |
 | [tests](tests/) | 独立核心用例、安装包重定位、双进程房间与存储轮换验证 |
 | [tools](tools/) | SDK 构建、打包和本地输出用量管理 |
-| [外部示例](../examples/) | 三引擎车场、机关、Shiftline、运行脚本及游戏交付包 |
+| [示例索引](#示例索引) | 游戏、同步演示、运行脚本及外部接入验收 |
 
 当前工作区的 Cocos 引擎位于同级目录。Photon 原版基线保存在 [references/photon](../references/photon/)，教学实验位于 [references/experiments](../references/experiments/)。[研究探针](research/fusion/probes/README.md)
