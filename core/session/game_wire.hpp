@@ -2,6 +2,8 @@
 
 #include "session/room.hpp"
 
+#define NETCODE_HAS_WORD_STATE 1
+
 namespace netcode {
 
 enum class GameMessage : std::uint8_t {
@@ -12,7 +14,8 @@ enum class GameMessage : std::uint8_t {
     WorldHello, WorldOffer, WorldMaps, MapReady, WorldObjects, SpawnRequest, SpawnResult,
     ModelHello, ModelFrame, ModelInputs, RpcSkip, CodecHello, CompactSnapshot, CodecAck, CodecReset,
     MigrationHello, MigrationPermit, MigrationPulse, MigrationEcho, MigrationChunk, MigrationVote, MigrationCommit,
-    WorldExtendedHello, WorldExtendedObjects, MigrationYield, MigrationYieldAck, WorldNamespace, SpawnReferenced
+    WorldExtendedHello, WorldExtendedObjects, MigrationYield, MigrationYieldAck, WorldNamespace, SpawnReferenced,
+    WordStateHello = 121, WordStateSupported, AuthorityStateWords
 };
 
 inline Writer game_packet(GameMessage type, RoomId room, RoundId round)

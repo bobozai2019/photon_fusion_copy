@@ -211,7 +211,7 @@ void GameSession::receive(const Event& event, TimePoint now) {
         return;
     Reader in(event.payload);
     GameMessage type;
-    if (!read_game_header(in, type, room(), round()))
+    if (!read_game_header(in, type, room(), round()) || writers_.negotiate_word_state(state_, event.peer, type, in))
         return;
     if (host_) {
         const auto* m = host_->member(event.peer);
@@ -342,7 +342,8 @@ void GameSession::flush(TimePoint now) {
         link_.send(guest_->peer(), Lane::Game, hello.bytes());
         codec_probe_ = tick_;
     }
-    writers_.flush(tick_);
+    writers_.probe_word_state(tick_);
+    writers_.flush(tick_, &state_);
     world_.flush();
     rpc_.update(now);
     link_.flush(now);

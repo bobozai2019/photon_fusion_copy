@@ -271,7 +271,7 @@ void test_compact() {
     Values fields{int32_t(-2), 3.14159f, array, std::string(90, 'X')};
     source.create(1, 1, 1, fields, 1);
     source.attach(1);
-    source.attach(2);
+    source.attach(2, true);
     source.enable_quantization(1, true);
     SnapshotCodec sender, receiver;
     uint32_t seq = 0, missing = 0;
@@ -374,6 +374,163 @@ void test_anchor_recovery() {
           "lost dictionary failed to recover on the wire");
 }
 
+void test_word_authority() {
+    MemoryTransport server, client;
+    SessionOptions options;
+    options.room = 402;
+    options.admission = {2, true, true};
+    options.host = true;
+    Schemas schemas;
+    check(schemas.add({1, 1, {{1, FieldType::Vec2}, {2, FieldType::Int}, {3, FieldType::Int}}}),
+          "writer word schema");
+    GameSession host(server, options, schemas);
+    options.host = false;
+    GameSession guest(client, options, schemas);
+    for (auto* game : {&host, &guest})
+        check(game->writers().register_model(1, 1, {1, 2, 3}, 3), "writer word model");
+    TimePoint now{};
+    Bytes dropped;
+    std::size_t word_packets = 0;
+    auto pump = [&](int frames, bool drop = false) {
+        for (int i = 0; i < frames; ++i) {
+            now += 30ms;
+            for (const auto& event : server.poll(now)) {
+                if (event.type == EventType::Message && !event.payload.empty() &&
+                    event.payload.front() == uint8_t(GameMessage::AuthorityStateWords)) {
+                    ++word_packets;
+                    if (drop) {
+                        dropped = event.payload;
+                        continue;
+                    }
+                }
+                host.receive(event, now);
+            }
+            host.flush(now);
+            guest.pump(now);
+        }
+    };
+    server.link(client);
+    pump(8);
+    check(host.start(now), "start word authority session");
+    const Values initial{Vector2{1, 2}, int32_t(7), int32_t(-9)};
+    const auto id = host.world().spawn(1, host.local(), initial);
+    pump(15);
+    check(id && host.writers().assign(id, guest.local(), host.tick()), "grant word writer");
+    pump(10);
+    const auto* grant = guest.writers().grant(id);
+    check(grant && grant->writer == guest.local(), "guest did not receive word grant");
+    const auto epoch = grant->epoch;
+    check(guest.writers().submit(id, epoch, 10, {Vector2{3, 2}, int32_t(7), int32_t(-9)}, {1}),
+          "submit first word sample");
+    pump(2, true);
+    check(!dropped.empty() && host.object(id)->values == initial, "first word sample was not sent and dropped");
+    const Values final{Vector2{3, 6}, int32_t(7), int32_t(-9)};
+    check(guest.writers().submit(id, epoch, 11, final, {2, 3}), "submit cumulative word sample");
+    pump(8);
+    check(host.object(id)->values == final && host.writers().grant(id)->sample.recovery == Bytes{2, 3} &&
+          guest.writers().grant(id)->confirmed == 2, "cumulative word state or recovery did not converge");
+    check(client.send(guest.guest()->peer(), Lane::Game, dropped), "replay old word sample");
+    pump(3);
+    check(host.object(id)->values == final && word_packets >= 3, "stale word sample rolled back state");
+    check(guest.writers().submit(id, epoch, 12, final, {9}), "submit recovery-only sample");
+    pump(5);
+    check(host.writers().grant(id)->sample.source_step == 12 &&
+          host.writers().grant(id)->sample.recovery == Bytes{9} && guest.writers().grant(id)->confirmed == 3,
+          "zero-word sample did not advance recovery");
+}
+
+void test_grant_replication_baseline() {
+    MemoryTransport server, writer_link, observer_link, late_link;
+    SessionOptions options;
+    options.room = 403;
+    options.admission = {4, true, true};
+    options.host = true;
+    Schemas schemas;
+    check(schemas.add({1, 1, {{1, FieldType::Float}}}), "grant baseline schema");
+    GameSession host(server, options, schemas);
+    options.host = false;
+    GameSession writer(writer_link, options, schemas), observer(observer_link, options, schemas),
+                late(late_link, options, schemas);
+    for (auto* session : {&host, &writer, &observer, &late})
+        check(session->writers().register_model(1, 1, {1}), "grant baseline model");
+    check(host.authority().set_quantum(1, 1, .1f), "grant baseline quantization");
+    TimePoint now{};
+    std::optional<Event> deferred_model;
+    Peer late_peer = 0;
+    auto pump = [&](int frames) {
+        while (frames-- > 0) {
+            now += 30ms;
+            for (const auto& event : server.poll(now)) {
+                if (late_peer && event.peer == late_peer && event.type == EventType::Message &&
+                    event.lane == Lane::Control && !event.payload.empty() &&
+                    event.payload.front() == uint8_t(GameMessage::AuthorityModels)) {
+                    deferred_model = event;
+                    continue;
+                }
+                host.receive(event, now);
+            }
+            host.flush(now);
+            writer.pump(now);
+            observer.pump(now);
+            late.pump(now);
+        }
+    };
+    server.link(writer_link);
+    server.link(observer_link);
+    server.link(late_link);
+    pump(8);
+    late_peer = host.host()->members().at(late.local()).peer;
+    check(host.start(now), "start grant baseline session");
+    pump(8);
+    const Distribution slow{InterestKind::Global, 0, UINT16_MAX};
+    const auto first = host.world().spawn(1, host.local(), {.14f});
+    const auto second = host.world().spawn(1, host.local(), {.14f});
+    const auto delayed = host.world().spawn(1, host.local(), {.14f});
+    for (const auto id : {first, second, delayed})
+        check(host.authority().set_distribution(id, slow), "set grant test send rate");
+    pump(12);
+    check(first && second && delayed && deferred_model && observer.object(first)->values == Values{.1f},
+          "quantized observer initial state");
+    const auto deliver_baseline = [&](GameSession& guest, ObjectId id) {
+        const auto* grant = guest.writers().grant(id);
+        const auto* object = guest.object(id);
+        return grant && object && object->revision >= grant->baseline_revision &&
+               guest.writers().presentation(*object).values == Values{.1f};
+    };
+    check(host.authority().capture(first, {.27f}, host.tick()) &&
+          host.authority().capture(first, {.14f}, host.tick()) &&
+          host.writers().assign(first, writer.local(), host.tick()), "capture then grant");
+    check(host.authority().capture(second, {.27f}, host.tick()) &&
+          host.writers().assign(second, writer.local(), host.tick()) &&
+          host.authority().capture(second, {.14f}, host.tick()), "grant then return to shadow");
+    pump(12);
+    check(deliver_baseline(observer, first) && deliver_baseline(observer, second), "grant revision stayed unpublished");
+
+    check(host.writers().assign(delayed, writer.local(), host.tick()), "grant delayed delivery case");
+    pump(8);
+    const auto* grant = writer.writers().grant(delayed);
+    check(grant && !late.writers().grant(delayed), "late model got grant prematurely");
+    for (const auto& [sequence, value] : {std::pair{1u, .27f}, std::pair{2u, .14f}}) {
+        auto packet = game_packet(GameMessage::AuthorityState, host.room(), host.round());
+        packet.u32(delayed);
+        packet.u32(grant->epoch);
+        packet.u32(sequence);
+        packet.u32(1);
+        packet.f32(value);
+        packet.u16(0);
+        check(writer_link.send(writer.guest()->peer(), Lane::Game, packet.bytes()), "send two accepted samples");
+    }
+    pump(1);
+    check(host.writers().grant(delayed)->confirmed == 2 &&
+          late.object(delayed)->revision < host.writers().grant(delayed)->baseline_revision,
+          "accepted samples did not coalesce before late grant");
+    host.receive(*deferred_model, now);
+    pump(12);
+    check(deliver_baseline(late, delayed) &&
+          observer.object(delayed)->revision < late.writers().grant(delayed)->baseline_revision &&
+          deliver_baseline(observer, delayed), "late grant did not refresh exactly its receiver's baseline");
+}
+
 int main() try {
     test_gameplay_methods();
     test_time();
@@ -381,6 +538,8 @@ int main() try {
     test_rpc_outcomes();
     test_compact();
     test_anchor_recovery();
+    test_word_authority();
+    test_grant_replication_baseline();
     MemoryTransport h, a, b, late;
     SessionOptions options;
     options.room = 105;

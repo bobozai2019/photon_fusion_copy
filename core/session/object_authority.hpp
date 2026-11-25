@@ -72,7 +72,10 @@ public:
     bool overlay(Object& view) const;
     Object presentation(const Object& canonical);
     bool receive(const Event& event, Tick now);
-    void flush(Tick now = 0);
+    // Pass the snapshot sender so a published grant can fence its receiver's baseline.
+    void flush(Tick now = 0, AuthorityState* replicas = nullptr);
+    bool negotiate_word_state(AuthorityState& state, Peer peer, GameMessage type, Reader& payload);
+    void probe_word_state(Tick send_tick);
     bool allow_requests(SchemaId schema, ClaimPolicy policy);
     std::optional<ClaimMode> mode(SchemaId schema) const {
         auto it=policies_.find(schema);return it==policies_.end()?std::nullopt:std::optional{it->second.mode};
@@ -105,6 +108,7 @@ private:
         std::size_t max_recovery;
         std::uint32_t signature;
         Validate validate;
+        WordLayout layout{};
     };
     struct Participant {
         PlayerId player;
@@ -119,7 +123,7 @@ private:
     static void merge(const Model& model, const Values& fields, Values& target);
     void notify(const ObjectGrant& grant);
     void receive_grant(Reader& in);
-    void receive_state(Peer peer, Reader& in, Tick now);
+    void receive_state(Peer peer, Reader& in, Tick now, bool delta);
     void send_ack(Peer peer, const ObjectGrant& grant);
     bool send_request(ObjectId object, bool release);
     void receive_claim(Peer peer, GameMessage type, Reader& in, Tick now);
@@ -142,6 +146,10 @@ private:
     PlayerId local_ = 0;
     Peer coordinator_ = 0;
     bool reply_pending_ = false;
+    bool word_deltas_ = false;
+    std::optional<Tick> word_state_probe_;
+    std::map<ObjectId, WordState> writable_words_;
+    Words sampled_words_;
     std::uint64_t submissions_ = 0, acceptances_ = 0;
     std::map<SchemaId, Model> models_;
     std::map<ObjectId, ObjectGrant> grants_;

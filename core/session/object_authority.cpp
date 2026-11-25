@@ -14,7 +14,8 @@ bool is_authority_message(std::uint8_t code)
     return (code >= static_cast<std::uint8_t>(GameMessage::AuthorityOffer) &&
             code <= static_cast<std::uint8_t>(GameMessage::AuthorityAck)) ||
            (code >= static_cast<std::uint8_t>(GameMessage::ClaimHello) &&
-            code <= static_cast<std::uint8_t>(GameMessage::ClaimResult));
+            code <= static_cast<std::uint8_t>(GameMessage::ClaimResult)) ||
+           code == static_cast<std::uint8_t>(GameMessage::AuthorityStateWords);
 }
 
 }
@@ -48,6 +49,7 @@ bool ObjectAuthority::register_model(SchemaId id, std::uint16_t version, const s
         if (bytes > game_payload_limit) return false;
         mix(field);
     }
+    model.layout.initialize(model.fields);
     return models_.emplace(id, std::move(model)).second;
 }
 
@@ -55,6 +57,9 @@ void ObjectAuthority::reset(RoomId room, RoundId round, PlayerId local, Peer coo
 {
     master_=master;
     grants_.clear();
+    writable_words_.clear();
+    word_deltas_ = false;
+    word_state_probe_.reset();
     awaiting_object_.clear();
     restoring_writer_.clear();
     removed_.clear();
@@ -124,6 +129,7 @@ void ObjectAuthority::unobserve(ObjectId object)
     restoring_writer_.erase(object);
     last_transfer_.erase(object);
     grants_.erase(object);
+    writable_words_.erase(object);
     awaiting_object_.erase(object);
     displays_.erase(object);
     for (auto& [peer, member] : peers_) member.delivered.erase(object);
@@ -198,6 +204,8 @@ bool ObjectAuthority::submit(ObjectId id, std::uint32_t epoch, Tick step, Values
     if (recovery.size() > model.max_recovery || values.size() != model.fields.size()) return false;
     for (std::size_t i = 0; i < values.size(); ++i)
         if (!valid_value(model.fields[i], values[i])) return false;
+    model.layout.pack(model.fields, values, sampled_words_);
+    writable_words_.at(id).stage(sampled_words_);
     g.sample = {g.sample.sequence + 1, step, std::move(values), std::move(recovery)};
     ++submissions_;
     return true;
@@ -275,6 +283,11 @@ void ObjectAuthority::receive_grant(Reader& in)
         !decode_sample(in, model, next.sample)) return;
     next.confirmed = next.sample.sequence;
     const auto id = next.object;
+    if (next.writer == local_) {
+        writable_words_[id].initialize(model.layout, model.fields, next.sample.values, next.sample.sequence);
+    } else {
+        writable_words_.erase(id);
+    }
     grants_[id] = std::move(next);
     if (obj && policies_.count(obj->schema)) last_transfer_[id] = local_step_;
     const auto prediction = predicted_.find(id);
@@ -295,7 +308,7 @@ void ObjectAuthority::send_ack(Peer peer, const ObjectGrant& g)
     link_.send(peer, Lane::Game, ack.bytes());
 }
 
-void ObjectAuthority::receive_state(Peer peer, Reader& in, Tick now)
+void ObjectAuthority::receive_state(Peer peer, Reader& in, Tick now, bool delta)
 {
     ObjectId id;
     std::uint32_t epoch;
@@ -307,7 +320,24 @@ void ObjectAuthority::receive_state(Peer peer, Reader& in, Tick now)
         (known_ && !known_(peer, id))) return;
     auto& model = models_.at(g.schema);
     AuthoritySample next;
-    if (!decode_sample(in, model, next) || !next.sequence) return;
+    if (delta) {
+        if (!in.u32(next.sequence) || !next.sequence || !in.u32(next.source_step)) return;
+        const bool newer = next.sequence > g.confirmed;
+        Words words;
+        if (newer) model.layout.pack(model.fields, g.sample.values, words);
+        std::uint64_t mask = 0;
+        std::uint16_t bytes;
+        if (!read_word_changes(in, model.layout, newer ? &words : nullptr, mask, true) ||
+            !in.u16(bytes) || bytes > model.max_recovery || !in.read(bytes, next.recovery) || !in.done()) return;
+        if (newer) {
+            next.values = g.sample.values;
+            for (std::size_t field = 0; field < model.fields.size(); ++field) {
+                if ((mask & (std::uint64_t{1} << field)) &&
+                    !unpack_words(model.fields[field], words.data() + model.layout.offsets[field], next.values[field]))
+                    return;
+            }
+        }
+    } else if (!decode_sample(in, model, next) || !next.sequence) return;
     if (next.sequence > g.confirmed) {
         if ((next.source_step && next.source_step < g.sample.source_step) ||
             (model.validate && !model.validate(*obj, g.sample, next, now))) {
@@ -333,7 +363,7 @@ bool ObjectAuthority::receive(const Event& event, Tick now)
     Reader in(event.payload);
     GameMessage type;
     if (!read_game_header(in, type, room_, round_)) return true;
-    if (type >= GameMessage::ClaimHello) {
+    if (type >= GameMessage::ClaimHello && type <= GameMessage::ClaimResult) {
         const auto lane = type == GameMessage::ClaimHello ? Lane::Game : Lane::Control;
         if (event.lane == lane) receive_claim(event.peer, type, in, now);
         return true;
@@ -343,7 +373,8 @@ bool ObjectAuthority::receive(const Event& event, Tick now)
     if (local_ == master_) {
         auto peer = peers_.find(event.peer);
         if (peer == peers_.end()) return true;
-        if (type == GameMessage::AuthorityState) receive_state(event.peer, in, now);
+        if (type == GameMessage::AuthorityState || type == GameMessage::AuthorityStateWords)
+            receive_state(event.peer, in, now, type == GameMessage::AuthorityStateWords);
         else if (type == GameMessage::AuthorityModels && peer->second.offered) {
             std::uint16_t version, count;
             if (!in.u16(version) || version != protocol_version || !in.u16(count) || in.remaining() != count * 6u)
@@ -377,7 +408,28 @@ bool ObjectAuthority::receive(const Event& event, Tick now)
     return true;
 }
 
-void ObjectAuthority::flush(Tick now)
+bool ObjectAuthority::negotiate_word_state(AuthorityState& state, Peer peer, GameMessage type, Reader& payload)
+{
+    if (type != GameMessage::WordStateHello && type != GameMessage::WordStateSupported) return false;
+    if (!round_ || !payload.done()) return true;
+    if (local_ == master_ && type == GameMessage::WordStateHello && state.enable_word_deltas(peer)) {
+        const auto reply = game_packet(GameMessage::WordStateSupported, room_, round_);
+        link_.send(peer, Lane::Game, reply.bytes());
+    } else if (local_ != master_ && peer == coordinator_ && type == GameMessage::WordStateSupported) {
+        word_deltas_ = true;
+    }
+    return true;
+}
+
+void ObjectAuthority::probe_word_state(Tick send_tick)
+{
+    if (!round_ || !coordinator_ || local_ == master_ || word_deltas_ ||
+        (word_state_probe_ && send_tick - *word_state_probe_ < 30)) return;
+    const auto hello = game_packet(GameMessage::WordStateHello, room_, round_);
+    if (link_.send(coordinator_, Lane::Game, hello.bytes())) word_state_probe_ = send_tick;
+}
+
+void ObjectAuthority::flush(Tick now, AuthorityState* replicas)
 {
     if (!room_ || !round_ || !local_) return;
     local_step_ = now;
@@ -408,7 +460,10 @@ void ObjectAuthority::flush(Tick now)
                 w.u32(g.epoch);
                 w.u32(g.baseline_revision);
                 encode_sample(w, g.sample);
-                if (link_.send(peer, Lane::Control, w.bytes())) member.delivered[id] = g.epoch;
+                if (link_.send(peer, Lane::Control, w.bytes())) {
+                    member.delivered[id] = g.epoch;
+                    if (replicas) replicas->require_baseline(peer, id, g.baseline_revision);
+                }
             }
         }
         return;
@@ -428,8 +483,39 @@ void ObjectAuthority::flush(Tick now)
         for (const auto& [id, model] : models_) { reply.u16(id); reply.u32(model.signature); }
         reply_pending_ = !link_.send(coordinator_, Lane::Control, reply.bytes());
     }
+    Writer delta;
     for (const auto& [id, g] : grants_) {
         if (g.writer != local_ || g.confirmed == g.sample.sequence || !lookup_(id)) continue;
+        auto& state = writable_words_.at(id);
+        state.scan(g.sample.sequence);
+        if (word_deltas_) {
+            delta.clear();
+            std::uint32_t count = 0;
+            std::size_t next_word = 0;
+            for (std::size_t i = 0; i < state.words.size(); ++i) {
+                if (state.revisions[i] <= g.confirmed) continue;
+                write_word_change(delta, std::uint32_t(i - next_word), state.words[i]);
+                ++count;
+                next_word = i + 1;
+            }
+            const auto& model = models_.at(g.schema);
+            std::size_t field_bytes = 0;
+            for (std::size_t i = 0; i < model.fields.size(); ++i)
+                field_bytes += value_size(model.fields[i], g.sample.values[i]);
+            if (delta.bytes().size() + word_varuint_size(count) <= field_bytes) {
+                auto packet = game_packet(GameMessage::AuthorityStateWords, room_, round_);
+                packet.u32(id);
+                packet.u32(g.epoch);
+                packet.u32(g.sample.sequence);
+                packet.u32(g.sample.source_step);
+                write_word_varuint(packet, count);
+                packet.append(delta.bytes());
+                packet.u16(static_cast<std::uint16_t>(g.sample.recovery.size()));
+                packet.append(g.sample.recovery);
+                link_.send(coordinator_, Lane::Game, packet.bytes());
+                continue;
+            }
+        }
         auto w = game_packet(GameMessage::AuthorityState, room_, round_);
         w.u32(id);
         w.u32(g.epoch);

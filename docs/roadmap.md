@@ -6,6 +6,8 @@ Godot 4 接入独立登记，沿用 Cocos2d-x 的 M0–M6 门槛。[Godot 接入
 
 可替换传输已通过 Windows x64 的 G1–G4 验收。新会话默认使用纯 TCP，三个引擎均完成外部 DLL 替换、重连和双向 RPC。Direct 通过跨版本互通，三版性能各过 15 格。[传输改造方案](../task/transport-providers/改造方案.md) · [执行状态与复现入口](../task/transport-providers/执行状态.md)
 
+2026-11-25，两轮复审确认并修复车场直连协商、量化切换和授权基线三个问题。Core `929c4f1663907b23` 的 9 项测试、车场 `match` 与 `prediction` 均通过。回归包含首次协商包丢失、未协商时双向字段回退、换局、旧投影迟到、同一发送间隔内采样值改回原样以及延迟投递同代授权。用现版车场及上一发布 Core `7c86097d5ebf426f` 的车场各编译一个进程，在本机 Direct 链路对调房主与客机，两组均通过移动与持权提交校验，房主分别接纳 69 和 70 次状态。三个 Release SDK 均基于修复后的 Core 构建，Godot `929c4f1663907b23/cbd0dce8d269280e` 通过原生 Shared 双端。[投影回归](../tests/core/replication_test.cpp) · [授权基线回归](../tests/core/game_session_test.cpp)
+
 ## 当前活动项 · property-binding
 
 首个能力是房主 A 向同引擎客人 B 同步浮点字段 `net_input_x`。现有 Fusion Shared Authority 样例用于研究属性机制，运行原版探针时以该对象的实际权威端为 A。可直接复跑的入口是[两条离线基线命令](../research/fusion/probes/README.md)。场景输入和待验收结果见[单属性同步规格](specs/property-binding.md)。

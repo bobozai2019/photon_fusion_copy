@@ -17,6 +17,7 @@ public:
     void f32(float value);
     void append(const Bytes& bytes);
     const Bytes& bytes() const { return bytes_; }
+    void clear() { bytes_.clear(); }
     Bytes take();
 
 private:

@@ -24,6 +24,7 @@ struct Schema {
     SchemaId id;
     std::uint16_t version;
     std::vector<Field> fields;
+    WordLayout layout{};
 };
 
 std::uint32_t schema_fingerprint(const Schema& schema);
@@ -62,7 +63,7 @@ public:
     std::vector<ObjectId> active() const;
     std::uint64_t changes() const { return changes_; }
 
-    void attach(Peer peer);
+    void attach(Peer peer, bool word_deltas = false);
     void detach(Peer peer);
     // Scene zero subscribes to all scenes. A missing selection includes all
     // matching objects; an empty selection includes none.
@@ -72,6 +73,9 @@ public:
     bool set_distribution(ObjectId object, Distribution distribution);
     bool set_quantum(SchemaId schema, FieldId field, float quantum);
     void enable_quantization(Peer peer, bool enabled);
+    bool enable_word_deltas(Peer peer);
+    // Keep the revision named by a grant reachable even when captures coalesce.
+    void require_baseline(Peer peer, ObjectId id, Tick revision);
     bool set_scope_parent(ObjectId child, ObjectId parent);
     bool gate_scene(Peer peer, SceneId scene, bool ready);
     ObjectId next_id() const { return highest_id_ == UINT32_MAX ? 0 : highest_id_ + 1; }
@@ -83,8 +87,9 @@ public:
 private:
     friend class CheckpointCodec;
     struct Entry {
+        Entry(Object state, const Schema& schema, Distribution distribution);
         Object object;
-        std::vector<Tick> changes;
+        WordState state;
         bool removed = false;
         Distribution distribution{};
         ObjectId scope_parent = 0;
@@ -93,19 +98,23 @@ private:
         std::map<ObjectId, Tick> baseline, sent, ack;
         SceneId scene = 0;
         bool quantize = false;
+        bool word_deltas = false;
         std::optional<std::set<ObjectId>> selected;
         std::set<SceneId> pending_scenes;
         std::map<std::uint64_t, std::uint16_t> areas, users;
         std::map<ObjectId, Tick> last_sent_tick;
         std::map<ObjectId, Tick> hidden, reentered;
+        std::map<ObjectId, Tick> required_baselines;
     };
     std::uint16_t send_divisor(const Entry& entry, const Progress& progress) const;
+    bool has_quantization(SchemaId schema) const;
     void refresh(Progress& progress);
     void prune();
     const Schemas& schemas_;
     ObjectId highest_id_ = 0;
     std::map<std::pair<SchemaId,FieldId>,float> quantization_;
     std::uint64_t changes_ = 0;
+    Words sampled_words_;
     std::map<ObjectId, Entry> entries_;
     std::map<Peer, Progress> peers_;
 };
@@ -130,6 +139,7 @@ private:
     const Schemas& schemas_;
     std::map<ObjectId, Object> objects_;
     std::map<ObjectId, Object> waiting_for_dependencies_;
+    std::map<ObjectId, Words> words_;
     std::map<ObjectId, Tick> removed_, hidden_;
     std::set<SceneId> loading_;
 };

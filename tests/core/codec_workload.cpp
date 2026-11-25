@@ -37,7 +37,7 @@ int main() try {
     for (int i = 0; i < 40; ++i)
         inventory[i] = i * 7937;
     host.create(1, 1, 1, {int32_t(0), label, inventory}, 1);
-    host.attach(1);
+    host.attach(1, true);
     size_t sent = 0, delivered = 0, retained = 0, raw = 0, encoded = 0;
     auto start = std::chrono::steady_clock::now();
     auto cpu = process_ms();

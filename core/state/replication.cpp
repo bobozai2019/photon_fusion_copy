@@ -9,7 +9,7 @@ namespace {
 
 constexpr std::size_t snapshot_header_size = 17 + 4 + 1;
 constexpr std::size_t max_snapshot_records = 96;
-constexpr std::uint8_t live = 1, removed = 2, hidden = 3, scoped = 4;
+constexpr std::uint8_t live = 1, removed = 2, hidden = 3, scoped = 4, word_delta = 5, scoped_word_delta = 6;
 
 std::uint64_t full_mask(std::size_t count)
 {
@@ -46,6 +46,7 @@ bool Schemas::add(Schema schema)
         if (field.id <= previous || !capacity || bytes > game_payload_limit) return false;
         previous = field.id;
     }
+    schema.layout.initialize(schema.fields);
     return schemas_.emplace(schema.id, std::move(schema)).second;
 }
 
@@ -72,6 +73,12 @@ void AuthorityState::clear()
     changes_ = 0;
 }
 
+AuthorityState::Entry::Entry(Object initial, const Schema& schema, Distribution scope)
+    : object(std::move(initial)), distribution(std::move(scope))
+{
+    state.initialize(schema.layout, schema.fields, object.values, object.revision);
+}
+
 bool AuthorityState::create(ObjectId id, SchemaId schema, PlayerId owner, const Values& values, Tick tick,
                             SceneId scene, const std::vector<ObjectId>& dependencies, Distribution distribution)
 {
@@ -86,7 +93,7 @@ bool AuthorityState::create(ObjectId id, SchemaId schema, PlayerId owner, const 
     }
     highest_id_ = id;
     entries_.emplace(id, Entry{{id, schema, owner, tick, 1, values, scene, dependencies},
-                              std::vector<Tick>(values.size(), 1), false, distribution});
+                              *schemas_.get(schema), std::move(distribution)});
     for (auto& [peer, progress] : peers_) {
         progress.baseline[id] = 1;
         refresh(progress);
@@ -101,12 +108,11 @@ bool AuthorityState::capture(ObjectId id, const Values& values, Tick tick)
     auto& entry = it->second;
     auto& object = entry.object;
     if (tick < object.sample_tick || !schemas_.valid(object.schema, values)) return false;
-    if (object.values == values) return true;
+    const auto* schema = schemas_.get(object.schema);
+    schema->layout.pack(schema->fields, values, sampled_words_);
+    if (!entry.state.stage(sampled_words_)) return true;
     ++changes_;
     ++object.revision;
-    for (std::size_t i = 0; i < values.size(); ++i) {
-        if (object.values[i] != values[i]) entry.changes[i] = object.revision;
-    }
     object.values = values;
     object.sample_tick = tick;
     return true;
@@ -140,10 +146,11 @@ std::vector<ObjectId> AuthorityState::active() const
     return result;
 }
 
-void AuthorityState::attach(Peer peer)
+void AuthorityState::attach(Peer peer, bool word_deltas)
 {
     if (!peer || peers_.count(peer)) return;
     auto& progress = peers_[peer];
+    progress.word_deltas = word_deltas;
     for (const auto& [id, entry] : entries_) {
         if (!entry.removed) progress.baseline[id] = entry.object.revision;
     }
@@ -293,10 +300,42 @@ bool AuthorityState::set_quantum(SchemaId schema, FieldId id, float quantum)
     if (quantum) quantization_[{schema,id}]=quantum; else quantization_.erase({schema,id});
     return true;
 }
-void AuthorityState::enable_quantization(Peer peer,bool enabled)
+bool AuthorityState::has_quantization(SchemaId schema) const
 {
-    auto it=peers_.find(peer);
-    if (it!=peers_.end()) it->second.quantize=enabled;
+    const auto it = quantization_.lower_bound({schema, 0});
+    return it != quantization_.end() && it->first.first == schema;
+}
+
+void AuthorityState::enable_quantization(Peer peer, bool enabled)
+{
+    const auto it = peers_.find(peer);
+    if (it == peers_.end() || it->second.quantize == enabled) return;
+    auto& progress = it->second;
+    progress.quantize = enabled;
+    if (quantization_.empty()) return;
+    for (auto& [id, entry] : entries_) {
+        if (entry.removed || progress.hidden.count(id) || !progress.sent.count(id) ||
+            !has_quantization(entry.object.schema)) continue;
+        // An older projection can be in flight even if it has not been acknowledged yet.
+        progress.required_baselines[id] = ++entry.object.revision;
+    }
+}
+
+bool AuthorityState::enable_word_deltas(Peer peer)
+{
+    const auto it = peers_.find(peer);
+    if (it == peers_.end()) return false;
+    it->second.word_deltas = true;
+    return true;
+}
+
+void AuthorityState::require_baseline(Peer peer, ObjectId id, Tick revision)
+{
+    const auto it = peers_.find(peer);
+    const auto* object = get(id);
+    if (it == peers_.end() || !object || revision > object->revision || revision <= progress_at(it->second.ack, id)) return;
+    auto& required = it->second.required_baselines[id];
+    required = std::max(required, revision);
 }
 bool AuthorityState::gate_scene(Peer peer, SceneId scene, bool ready)
 {
@@ -321,19 +360,21 @@ std::vector<Bytes> AuthorityState::packets(Peer peer, RoomId room, RoundId round
 {
     auto& progress = peers_.at(peer);
     std::vector<Bytes> result;
-    Writer records;
+    Writer records, record, data, delta;
     std::uint8_t count = 0;
     const auto flush = [&] {
         if (!count) return;
         auto packet = game_packet(GameMessage::Snapshot, room, round);
         packet.u32(send_tick);
         packet.u8(count);
-        packet.append(records.take());
+        packet.append(records.bytes());
         result.push_back(packet.take());
+        records.clear();
         count = 0;
     };
-    for (const auto& [id, entry] : entries_) {
+    for (auto& [id, entry] : entries_) {
         const auto& object = entry.object;
+        if (!entry.removed) entry.state.scan(object.revision);
         const Tick ack = progress_at(progress.ack, id);
         const bool hide = !entry.removed && progress.hidden.count(id);
         const Tick revision = hide ? progress.hidden.at(id) : object.revision;
@@ -343,51 +384,85 @@ std::vector<Bytes> AuthorityState::packets(Peer peer, RoomId room, RoundId round
             send_tick - progress_at(progress.last_sent_tick, id) < retry_ticks) continue;
         if (!entry.removed && !hide && !std::all_of(object.dependencies.begin(), object.dependencies.end(),
                 [&](ObjectId dep) { return known(peer, dep); })) continue;
-        Writer record;
+        const bool has_scope = object.scene || !object.dependencies.empty();
+        auto kind = entry.removed ? removed : hide ? hidden : has_scope ? scoped : live;
+        data.clear();
+        if (!entry.removed && !hide) {
+            const auto& schema = *schemas_.get(object.schema);
+            const auto& offsets = schema.layout.offsets;
+            std::uint64_t mask = full_mask(schema.fields.size());
+            delta.clear();
+            std::uint32_t dirty_count = 0;
+            const auto required_baseline = std::max(progress_at(progress.reentered, id),
+                                                     progress_at(progress.required_baselines, id));
+            if (ack && ack >= required_baseline) {
+                const auto rate = send_divisor(entry, progress);
+                if (!rate || (rate > 1 && send_tick / rate == progress.last_sent_tick[id] / rate)) continue;
+                const bool quantized = progress.quantize && has_quantization(object.schema);
+                const bool use_words = progress.word_deltas && !quantized;
+                std::size_t next_word = 0, field_bytes = 8;
+                mask = 0;
+                for (std::size_t field = 0; field < schema.fields.size(); ++field) {
+                    bool dirty = false;
+                    for (auto i = offsets[field]; i < offsets[field + 1]; ++i) {
+                        if (entry.state.revisions[i] <= ack) continue;
+                        dirty = true;
+                        if (!use_words) break;
+                        write_word_change(delta, std::uint32_t(i - next_word), entry.state.words[i]);
+                        next_word = i + 1;
+                        ++dirty_count;
+                    }
+                    if (!dirty) continue;
+                    mask |= std::uint64_t{1} << field;
+                    if (use_words) field_bytes += value_size(schema.fields[field], object.values[field]);
+                }
+                if (!mask) continue;
+                if (use_words && delta.bytes().size() + word_varuint_size(dirty_count) <= field_bytes)
+                    kind = has_scope ? scoped_word_delta : word_delta;
+            }
+            if (kind == word_delta || kind == scoped_word_delta) {
+                write_word_varuint(data, dirty_count);
+                data.append(delta.bytes());
+            } else {
+                data.u64(mask);
+                for (std::size_t i = 0; i < object.values.size(); ++i) {
+                    if (!(mask & (std::uint64_t{1} << i))) continue;
+                    const auto quantum = progress.quantize ? quantization_.find({object.schema, schema.fields[i].id})
+                                                            : quantization_.end();
+                    if (quantum == quantization_.end()) {
+                        write_value(data, object.values[i]);
+                        continue;
+                    }
+                    auto value=object.values[i];
+                    auto quantize=[q=double(quantum->second)](float& n) {
+                        const auto rounded=std::round(double(n)/q)*q;
+                        const auto result=static_cast<float>(rounded);
+                        if (std::isfinite(result)) n=result;
+                    };
+                    if (auto* n=std::get_if<float>(&value)) quantize(*n);
+                    if (auto* v=std::get_if<Vector2>(&value)) for(auto& n:*v) quantize(n);
+                    if (auto* v=std::get_if<Vector3>(&value)) for(auto& n:*v) quantize(n);
+                    write_value(data,value);
+                }
+            }
+        }
+        record.clear();
         record.u32(id);
         record.u32(revision);
         record.u32(object.sample_tick);
-        const bool has_scope = object.scene || !object.dependencies.empty();
-        record.u8(entry.removed ? removed : hide ? hidden : has_scope ? scoped : live);
+        record.u8(kind);
         if (!entry.removed && !hide) {
             if (has_scope) {
                 record.u32(object.scene);
                 record.u8(static_cast<std::uint8_t>(object.dependencies.size()));
                 for (const auto dep : object.dependencies) record.u32(dep);
             }
-            record.u16(object.schema);
             const auto& schema = *schemas_.get(object.schema);
+            record.u16(object.schema);
             record.u16(schema.version);
             record.u32(schema_fingerprint(schema));
             record.u32(object.owner);
-            std::uint64_t mask = full_mask(entry.changes.size());
-            if (ack && ack >= progress_at(progress.reentered, id)) {
-                const auto rate = send_divisor(entry, progress);
-                if (!rate || (rate > 1 && send_tick / rate == progress.last_sent_tick[id] / rate)) continue;
-                mask = 0;
-                for (std::size_t i = 0; i < entry.changes.size(); ++i)
-                    if (entry.changes[i] > ack) mask |= std::uint64_t{1} << i;
-                if (!mask) continue;
-            }
-            record.u64(mask);
-            for (std::size_t i = 0; i < object.values.size(); ++i) {
-                if (!(mask & (std::uint64_t{1} << i))) continue;
-                auto quantum=quantization_.find({object.schema,schema.fields[i].id});
-                if (!progress.quantize || quantum==quantization_.end()) {
-                    write_value(record,object.values[i]);
-                    continue;
-                }
-                auto value=object.values[i];
-                auto quantize=[q=double(quantum->second)](float& n) {
-                    const auto rounded=std::round(double(n)/q)*q;
-                    const auto result=static_cast<float>(rounded);
-                    if (std::isfinite(result)) n=result;
-                };
-                if (auto* n=std::get_if<float>(&value)) quantize(*n);
-                if (auto* v=std::get_if<Vector2>(&value)) for(auto& n:*v) quantize(n);
-                if (auto* v=std::get_if<Vector3>(&value)) for(auto& n:*v) quantize(n);
-                write_value(record,value);
-            }
+            record.append(data.bytes());
         }
         if (snapshot_header_size + records.bytes().size() + record.bytes().size() > game_payload_limit ||
             count == max_snapshot_records) flush();
@@ -418,6 +493,9 @@ bool AuthorityState::acknowledge(Peer peer, Reader& payload)
     for (const auto& [id, revision] : acks) {
         if (revision <= progress_at(progress.sent, id)) {
             progress.ack[id] = std::max(revision, progress_at(progress.ack, id));
+            const auto baseline = progress.required_baselines.find(id);
+            if (baseline != progress.required_baselines.end() && revision >= baseline->second)
+                progress.required_baselines.erase(baseline);
         }
     }
     prune();
@@ -445,6 +523,7 @@ void AuthorityState::prune()
             progress.ack.erase(id);
             progress.hidden.erase(id);
             progress.reentered.erase(id);
+            progress.required_baselines.erase(id);
         }
         it = entries_.erase(it);
     }
@@ -454,6 +533,7 @@ void ReplicaState::clear()
 {
     objects_.clear();
     waiting_for_dependencies_.clear();
+    words_.clear();
     loading_.clear();
     removed_.clear();
     hidden_.clear();
@@ -465,7 +545,7 @@ bool ReplicaState::apply(Reader& payload, RoomId room, RoundId round, AppliedSna
     std::uint8_t count;
     if (!payload.u32(send_tick) || !send_tick || !payload.u8(count) || !count ||
         count > max_snapshot_records) return false;
-    struct Update { Object object; std::uint8_t kind; bool changed; };
+    struct Update { Object object; std::uint8_t kind; bool changed; Words words; };
     std::vector<Update> updates;
     std::set<ObjectId> seen;
     for (std::uint8_t i = 0; i < count; ++i) {
@@ -482,10 +562,11 @@ bool ReplicaState::apply(Reader& payload, RoomId room, RoundId round, AppliedSna
         const Tick known = prior ? prior->revision : std::max(tombstone, progress_at(hidden_, o.id));
         const bool newer = o.revision > known;
         if (kind == removed || kind == hidden) {
-            updates.push_back({o, kind, newer});
+            updates.push_back({std::move(o), kind, newer, {}});
             continue;
         }
-        if (kind == scoped) {
+        const bool delta = kind == word_delta || kind == scoped_word_delta;
+        if (kind == scoped || kind == scoped_word_delta) {
             std::uint8_t deps;
             if (!payload.u32(o.scene) || !payload.u8(deps) || deps > 16) return false;
             ObjectId previous = 0;
@@ -498,26 +579,46 @@ bool ReplicaState::apply(Reader& payload, RoomId room, RoundId round, AppliedSna
         }
         std::uint16_t version;
         std::uint32_t fingerprint;
-        std::uint64_t mask;
-        if ((kind != live && kind != scoped) || !payload.u16(o.schema) || !payload.u16(version) || !payload.u32(fingerprint) ||
-            !payload.u32(o.owner) || !payload.u64(mask)) return false;
+        if ((!delta && kind != live && kind != scoped) || !payload.u16(o.schema) || !payload.u16(version) ||
+            !payload.u32(fingerprint) || !payload.u32(o.owner)) return false;
         const auto* schema = schemas_.get(o.schema);
-        if (!schema || schema->version != version || schema_fingerprint(*schema) != fingerprint || !mask ||
-            (mask & ~full_mask(schema->fields.size()))) return false;
+        if (!schema || schema->version != version || schema_fingerprint(*schema) != fingerprint) return false;
         if (newer && tombstone) return false;
         if (prior) {
             if (o.schema != prior->schema || o.owner != prior->owner ||
                 o.scene != prior->scene || o.dependencies != prior->dependencies) return false;
-            o.values = prior->values;
+        }
+        Words words;
+        const auto& offsets = schema->layout.offsets;
+        if (newer) {
+            if (prior) {
+                words = words_.at(o.id);
+                o.values = prior->values;
+            } else {
+                words.resize(offsets.back());
+                o.values.resize(schema->fields.size());
+            }
+        }
+        std::uint64_t mask = 0;
+        if (delta) {
+            if ((newer && !prior) || !read_word_changes(payload, schema->layout, newer ? &words : nullptr, mask)) return false;
         } else {
-            if (newer && mask != full_mask(schema->fields.size())) return false;
-            o.values.resize(schema->fields.size());
+            const auto full = full_mask(schema->fields.size());
+            if (!payload.u64(mask) || !mask || (mask & ~full) || (newer && !prior && mask != full)) return false;
         }
         for (std::size_t index = 0; index < schema->fields.size(); ++index) {
-            if ((mask & (std::uint64_t{1} << index)) &&
-                !read_value(payload, schema->fields[index], o.values[index])) return false;
+            if (!(mask & (std::uint64_t{1} << index))) continue;
+            const auto field = schema->fields[index];
+            if (delta) {
+                if (!unpack_words(field, words.data() + offsets[index], o.values[index])) return false;
+            } else {
+                Value ignored;
+                auto& value = newer ? o.values[index] : ignored;
+                if (!read_value(payload, field, value)) return false;
+                if (newer) pack_words(field, value, words.data() + offsets[index]);
+            }
         }
-        updates.push_back({std::move(o), kind, newer});
+        updates.push_back({std::move(o), kind, newer, std::move(words)});
     }
     if (!payload.done()) return false;
     result = {};
@@ -541,11 +642,13 @@ bool ReplicaState::apply(Reader& payload, RoomId room, RoundId round, AppliedSna
             }
             objects_.erase(id);
             waiting_for_dependencies_.erase(id);
+            words_.erase(id);
         } else {
             if (!objects_.count(id)) fresh.insert(id);
             hidden_.erase(id);
             objects_[id] = std::move(update.object);
             waiting_for_dependencies_.erase(id);
+            words_[id] = std::move(update.words);
         }
         result.changed.push_back(id);
     }

@@ -374,8 +374,7 @@ bool CheckpointCodec::restore(GameSession& g, const Bytes& image, TimePoint now)
         const auto original_owner = o.owner;
         if (o.owner == h.coordinator)
             o.owner = g.coordinator();
-        g.state_.entries_.emplace(id, AuthorityState::Entry{o, std::vector<Tick>(o.values.size(), o.revision),
-                                                            false, s.distribution});
+        g.state_.entries_.emplace(id, AuthorityState::Entry{o, *g.schemas_.get(o.schema), s.distribution});
         if (s.identity) {
             g.world_.objects_[id] = *s.identity;
             g.state_.entries_.at(id).scope_parent = s.identity->parent;

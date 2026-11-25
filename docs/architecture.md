@@ -1,4 +1,4 @@
-# 跨引擎联机框架架构技术文档
+# 多引擎联机框架架构技术文档
 
 **技术基线**　Windows x64 · C++17 · Cocos2d-x 4 · Godot 4.7.1\
 **文档日期**　2026-11-20
@@ -88,12 +88,12 @@ Cocos2d-x 窗口      Godot 窗口        轻量客人
 | 3D 展示物 | 模板 3。`model` 子节点的 3D 变换与根字段 `marker` |
 | 路障及负载对象 | 模板 4、5。2D 变换和标记字段 |
 
-约定线上的浮点值为小端 IEEE 754 单精度，布尔值占一个字节。活对象记录带 schema ID、版本、字段列表指纹和字段位掩码。接收方用配置辨认字段位置，校验模板版本、指纹、掩码和值，再把数据应用到副本。[共享配置](../examples/car-yard/replicators.cfg) · [属性行为规格](specs/property-binding.md)
+布尔值在内存中占一个 word，在完整字段编码中占一个字节。活对象记录带 schema ID、版本和字段列表指纹。接收方按模板辨认字段掩码或 word 位置，校验后应用到副本。[共享配置](../examples/car-yard/replicators.cfg) · [属性行为规格](specs/property-binding.md)
 
 ### 5.2 采样、差量、确认
 
-1. 房主调用 `AuthorityState::capture` 采集一份值。值变化时增加对象 revision，受影响字段各自登记最新变更版本。业务对象和已采样副本的时间可以独立观测。
-2. 每条连接记录已发送与已确认的对象版本。房主选择晚于该客人已确认版本的字段，按包大小分组。客人首次见到对象时收到完整字段，后续可收差量。最终状态在确认到达前持续可发送。
+1. 房主调用 `AuthorityState::capture` 把采样值写入模板的定长 word 位置。位模式变化时增加对象 revision。发送扫描比较 `Words` 和 `Shadow`，给变化的 word 记录当前版本。
+2. 每条连接记录已发送与已确认的对象版本。房主选择晚于该客人已确认版本的 word，按包大小分组。客人首次见到对象时收到完整字段，后续可收差量。最终状态在确认到达前持续可发送。
 3. `ReplicaState::apply` 先解析完整报文，再提交对象变更。只提交比本地已知版本新的记录。旧包和重复包也可以再次被确认，由此避免确认丢失造成持续重发。
 4. `StateAck` 返回对象和已处理版本的集合。房主在已发送进度范围内单调推进确认，不受迟到的较旧 ACK 影响。不同对象可以独立追赶。
 
@@ -101,25 +101,25 @@ Cocos2d-x 窗口      Godot 窗口        轻量客人
 
 ### 5.3 Shadow Buffer 与状态副本
 
-如果把 Shadow Buffer 定义为用于比较新旧属性值的上一份采样，那么自研核心已有对应机制。房主在 `AuthorityState::Entry::object.values` 保存每个对象最近采集的属性值。`capture` 先和这份值比较，再覆盖有变化的采样。实现中没有名为 `ShadowBuffer` 的独立类型。
+`WordState` 将当前状态、上次发送扫描和变化版本保存在三个连续数组中。房主和持权客人用同一结构。引擎接口和检查点仍使用类型化值。[布局与收发图](specs/property-binding.md#状态布局和差量)
 
 | 数据 | 作用 |
 | --- | --- |
-| 房主的 `object.values` 与 `changes` | 保存最新采样值及每个字段最后一次变化的对象版本。新采样与已有值比较时定位变化字段 |
-| 房主每条连接的 `Progress::ack` | 为每个对象记录该客人已确认到的版本。打包时发送 `changes[i] > ack` 的字段与其当前值。每条连接只记录版本，不另外保存一份完整属性副本 |
-| 客人的 `ReplicaState::objects_` | 保存最近应用的权威值。差量包只覆盖掩码中出现的字段，留下其余字段 |
+| `Words`、`Shadow`、逐 word 版本 | 保存当前采样、上次扫描结果和每个 word 最后一次变化的版本 |
+| 房主每条连接的 `Progress::ack` | 为每个对象记录该客人已确认到的版本。选取变更版本高于 ACK 的 word 和其当前值 |
+| 客人的 `ReplicaState` | 保存最近应用的权威 word 和类型化值。差量合并后将受影响字段解码供引擎使用 |
 | 引擎适配器的显示值 | Cocos 的 `from/to/display` 和 Godot 的 `previous/target/displayed` 用于变换插值。显示值不会参与发送差量的判断 |
 
-例如，客人确认到版本 10，位置在版本 11 变化，油门在版本 12 变化。即使版本 11 的包丢失，房主仍会在后续版本 12 的记录中发送两个字段的最新值。另一位已经确认到版本 11 的客人只需收到油门。客人重连时，新连接从零确认进度开始，每个存活对象先得到完整字段。[复制数据结构](../core/state/replication.hpp) · [采集和差量实现](../core/state/replication.cpp) · [Cocos 显示状态](../engineplatform/cocos2dx/replicator.hpp) · [Godot 显示状态](../examples/godot-yard/replicator.gd)
+客人确认到版本 10 后，若位置 X 在版本 11 变化、Y 在 12 变化，丢失包 11 的客人可在包 12 补齐 X 和 Y。已经确认到版本 11 的客人只需 Y。新连接从零确认进度开始，先得到完整字段。[复制数据结构](../core/state/replication.hpp) · [采集和差量实现](../core/state/replication.cpp)
 
-Photon Fusion Core v3 的 `Object` 有真实的 `Words` 和 `Shadow` 两份缓冲。原版在发送阶段用最新编码值与 `Shadow` 逐 word 比较，再按变更 tick 和确认进度选择数据。本项目在采集阶段比较属性值，发包前按字段版本与客人确认进度筛选。`Shadow` 保存上次扫描值。需要逐 tick 历史的预测与回滚另有其状态要求，本项目当前只保留最新权威采样。下面第 12 节给出原版的二进制证据和自研源码对照。[Fusion Core v3 Shadow Buffer](https://doc.photonengine.com/fusion-core/v3/manual/objects#shadow-buffer) · [源码架构对照](#12-fusion-core-v3-与自研-core-的源码对照)
+Fusion Core v3 在发送阶段用最新编码值与 `Shadow` 逐 word 比较，再按变更 tick 和确认进度选择数据。本项目用对象 revision 或写权样本序号驱动相同的选择。启用模型预测的对象另有输入历史与重演检查点。[Fusion Core v3 Shadow Buffer](https://doc.photonengine.com/fusion-core/v3/manual/objects#shadow-buffer) · [源码架构对照](#12-fusion-core-v3-与自研-core-的源码对照)
 
 ### 5.4 创建和销毁
 
 | 操作 | 房主 | 客人 |
 | --- | --- | --- |
 | 创建 | 分配新对象 ID，写入模板、所属玩家、初值和首版 revision | 首次看到完整记录时按模板生成节点并登记 ID |
-| 更新 | 更新对象 revision 和字段变更版本 | 按 ID 修改已有对象，显示层可独立插值 |
+| 更新 | 更新对象 revision，发送时登记逐 word 变更版本 | 按 ID 修改已有对象，显示层可独立插值 |
 | 销毁 | 添加载有 ID 和新 revision 的销毁记录，等待相关连接确认 | 删除副本并释放节点，以销毁版本识别延迟的旧记录 |
 
 房主已给某客人发过该对象，或该对象属于对方的初始化基线时，继续向该客人提交销毁。所有相关连接完成确认或已离开后，房主可回收销毁记录。同一局中重新在原地生成同一模板会使用新 ID。客机的旧创建包因版本和身份检查不会复活已删除对象。车场的节点寿命取决于副本中的活动对象集合。[状态实现](../core/state/replication.cpp) · [Godot 节点绑定](../examples/godot-yard/replicator.gd)
@@ -215,7 +215,7 @@ Photon Fusion 的通道职责启发了状态与 RPC 的设计，Unreal 的 RPC �
 
 [完整架构对比](fusion-core-comparison.md)逐项展开对象布局、ACK、字节级包格式、RPC、重连、预测和已验证范围。
 
-**借鉴深入到状态复制的算法和引擎边界。** 两套实现都在引擎层解析属性，在引擎无关层保存对象状态、跟踪每个数据单元最近一次变化，并用确认进度驱动差量重发。项目采用类型化字段和逐客人对象版本，原版采用定长 word、Shadow 和逐 word 变化 tick。房间、传输和权威模型由各自实现决定。[本项目引擎边界](decisions/engine-boundary.md) · [传输取舍](decisions/game-transport.md) · [Fusion Core 架构](https://doc.photonengine.com/fusion-core/v3/manual/architecture)
+两套实现都在引擎层解析属性，在 Core 通过定长 word、Shadow 和逐 word 变更记录驱动重发。本项目的逐客人对象 ACK 和授权样本 ACK 对应两条会话链路。房间、传输和写权模型各有独立实现。[本项目引擎边界](decisions/engine-boundary.md) · [传输取舍](decisions/game-transport.md) · [Fusion Core 架构](https://doc.photonengine.com/fusion-core/v3/manual/architecture)
 
 对照的原版为 **Fusion Godot Racing 3.0.0 Shared Authority**。样例脚本、场景和 C# 包装可读。原生 GDExtension 以编译库交付，图中的原生调用来自已核对 SHA-256 的 Linux x86-64 编辑器库。云端方框只描述该模式的公开职责。静态调用点证明路径存在，单个属性每帧采集次数和原版跨端写回仍待运行时验证。[参考构建指纹](../research/fusion/builds/racing-3.0.0.md) · [Godot SDK 交付内容](https://doc.photonengine.com/fusion-godot/v3-shared-authority/getting-started/sdk-download) · [原版运行探针](../research/fusion/probes/README.md)
 
@@ -237,10 +237,10 @@ flowchart LR
     direction TB
     n1["引擎入口 · Cocos YardScene / Godot NetcodeYard<br/>共用 Runner::update → Match::update"]
     n2["样例模拟 · Match::simulate<br/>采集权威值 → AuthorityState::capture"]
-    n3["状态核心 · AuthorityState::packets<br/>字段变化版本大于该客人的对象 ACK 就发送最新值"]
+    n3["状态核心 · AuthorityState::packets<br/>扫描 Shadow，按该客人的对象 ACK 选择 word"]
     n4["会话核心 · RoomHost / RoomGuest、Rpc<br/>房间与 RPC 分别管理状态，Match 负责调度"]
     n5["Windows 传输 · Direct / Winsock<br/>TCP 管房间，UDP 送快照、确认、输入和 RPC"]
-    n6["对端状态 · ReplicaState::apply<br/>合并字段并发 StateAck，按对象版本过滤旧包"]
+    n6["对端状态 · ReplicaState::apply<br/>合并 word 并发 StateAck，按对象版本过滤旧包"]
     n7["引擎适配器 · Cocos / Godot<br/>按对象 ID 和模板建节点，更新字段与插值"]
     n1 --> n2 --> n3 --> n5
     n5 -.-> n6 --> n7

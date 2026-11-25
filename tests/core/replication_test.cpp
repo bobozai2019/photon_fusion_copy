@@ -15,12 +15,114 @@ void check(bool ok, const char* message)
     std::exit(1);
 }
 
+void test_word_snapshots()
+{
+    constexpr RoomId room = 20;
+    constexpr RoundId round = 1;
+    constexpr Peer first = 1, second = 2, legacy = 3;
+    constexpr std::size_t kind_offset = 22 + 12, body_offset = 22 + 25;
+    Schemas schemas;
+    check(schemas.add({1, 1, {{1, FieldType::Vec2}, {2, FieldType::ByteArray, 12}}}), "word schema");
+    AuthorityState authority(schemas);
+    ReplicaState replica(schemas), delayed(schemas), old(schemas);
+    const Values original{Vector2{1, 2}, Bytes{1, 2, 3, 4, 5}};
+    check(authority.create(1, 1, 1, original, 1), "word object");
+    const auto apply = [&](const Bytes& packet, ReplicaState& state, Peer peer, bool ack = true) {
+        Reader in(packet);
+        GameMessage type;
+        AppliedSnapshot result;
+        if (!read_game_header(in, type, room, round) || type != GameMessage::Snapshot ||
+            !state.apply(in, room, round, result)) return false;
+        if (!ack) return true;
+        Reader reply(result.ack);
+        return read_game_header(reply, type, room, round) && type == GameMessage::StateAck &&
+               authority.acknowledge(peer, reply);
+    };
+    authority.attach(first, true);
+    authority.attach(second, true);
+    authority.attach(legacy);
+    check(apply(authority.packets(first, room, round, 1).at(0), replica, first) &&
+          apply(authority.packets(second, room, round, 1).at(0), delayed, second) &&
+          apply(authority.packets(legacy, room, round, 1).at(0), old, legacy), "word baselines");
+    check(authority.capture(1, {Vector2{3, 2}, Bytes{1, 2, 3, 4, 5}}, 2) &&
+          authority.capture(1, original, 2) && authority.packets(first, room, round, 2).empty(),
+          "transient change survived the shadow scan");
+    const Values x_changed{Vector2{3, 2}, Bytes{1, 2, 3, 4, 5}};
+    check(authority.capture(1, x_changed, 3), "capture vector component");
+    const auto x_delta = authority.packets(first, room, round, 3).at(0);
+    check(x_delta[kind_offset] == 5 && x_delta[body_offset] == 1 && x_delta[body_offset + 1] == 0 &&
+          x_delta.size() == body_offset + 7, "one component did not emit one indexed word");
+    auto invalid = x_delta;
+    invalid[body_offset + 1] = 97;
+    check(!apply(invalid, replica, first) && replica.objects().at(1).values == original,
+          "invalid word position committed");
+    check(apply(x_delta, replica, first) && replica.objects().at(1).values == x_changed, "word vector apply");
+    const Values final{Vector2{3, 6}, Bytes{1, 2, 3}};
+    check(authority.capture(1, final, 4), "capture shrunk vector and bytes");
+    const auto next = authority.packets(first, room, round, 4).at(0);
+    const auto both = authority.packets(second, room, round, 4).at(0);
+    const auto fallback = authority.packets(legacy, room, round, 4).at(0);
+    check(next[kind_offset] == 5 && both[kind_offset] == 5 && both[body_offset] == next[body_offset] + 1 &&
+          fallback[kind_offset] == 1, "delta did not follow per-peer ACK and legacy capability");
+    check(apply(next, replica, first) && apply(both, delayed, second) && apply(x_delta, delayed, second) &&
+          apply(fallback, old, legacy) && replica.objects().at(1).values == final &&
+          delayed.objects().at(1).values == final && old.objects().at(1).values == final,
+          "word streams did not converge after a gap, shrink, or stale update");
+}
+
+void test_projection_baseline()
+{
+    constexpr RoomId room = 21;
+    constexpr RoundId round = 1;
+    Schemas schemas;
+    check(schemas.add({1, 1, {{1, FieldType::Vec2}, {2, FieldType::Float}}}), "projection schema");
+    AuthorityState host(schemas);
+    ReplicaState guest(schemas), other(schemas);
+    const Values raw{Vector2{.14f, .24f}, .37f};
+    const Values quantized{Vector2{.1f, .2f}, .4f};
+    check(host.set_quantum(1, 1, .1f) && host.set_quantum(1, 2, .1f) &&
+          host.create(1, 1, 1, raw, 1), "projection object");
+    host.attach(1, true);
+    host.attach(2, true);
+    host.enable_quantization(1, true);
+    auto deliver = [&](Peer peer, ReplicaState& replica, const Bytes& packet) {
+        Reader in(packet);
+        GameMessage type;
+        AppliedSnapshot result;
+        check(read_game_header(in, type, room, round) && replica.apply(in, room, round, result), "apply projection");
+        Reader ack(result.ack);
+        check(read_game_header(ack, type, room, round) && host.acknowledge(peer, ack), "projection ACK");
+    };
+    deliver(1, guest, host.packets(1, room, round, 1).at(0));
+    deliver(2, other, host.packets(2, room, round, 1).at(0));
+    check(guest.objects().at(1).values == quantized, "first projection");
+    host.enable_quantization(1, false);
+    check(host.known(1, 1) && host.packets(2, room, round, 2).empty(), "projection affected another peer or visibility");
+    deliver(1, guest, host.packets(1, room, round, 2).at(0));
+    check(guest.objects().at(1).values == raw, "switch without capture did not clear all quantized fields");
+    host.enable_quantization(1, true);
+    const auto late = host.packets(1, room, round, 3).at(0);
+    host.enable_quantization(1, false);
+    const Values latest{Vector2{.16f, .24f}, .37f};
+    check(host.capture(1, latest, 4), "capture one unquantized component");
+    const auto full = host.packets(1, room, round, 4).at(0);
+    check(full[34] == 1, "switch must send a full record while old projection is unacknowledged");
+    deliver(1, guest, full);
+    deliver(1, guest, late);
+    check(guest.objects().at(1).values == latest && host.packets(1, room, round, 5).empty(),
+          "late quantized projection rolled back the new baseline");
+}
+
 }
 
 int main()
 {
     using namespace netcode;
-    Values rich{Vector4{{1,2,3,4}},Color{{.25f,0,1,1}},ObjectReference{0xfedcba9876543210ull},
+    test_word_snapshots();
+    test_projection_baseline();
+    Values rich{1.25f, true, std::int32_t(-17), Vector2{1, 2}, Vector3{1, 2, 3}, Rotation{0, 0, 0, 1},
+                std::string("abc"), IntArray{-1, 7}, FloatArray{-10.5f, 0},
+                Vector4{{1,2,3,4}},Color{{.25f,0,1,1}},ObjectReference{0xfedcba9876543210ull},
                 Bytes{255,0},Vector2Array{{1,-2}},IntMap{{-1,42},{7,-6}},IntLinkedList{2,2,-1}};
     for (const auto& v:rich) {
         auto kind=FieldType(v.index());
@@ -28,6 +130,9 @@ int main()
         check(valid_value(f,v),"new field rejected");
         Writer w; write_value(w,v); Reader r(w.bytes()); Value decoded;
         check(read_value(r,f,decoded) && r.done() && v==decoded,"new field did not round trip");
+        Words words(word_capacity(f), UINT32_MAX);
+        pack_words(f, v, words.data());
+        check(unpack_words(f, words.data(), decoded) && v == decoded, "word field did not round trip");
         auto short_data=w.bytes(); short_data.pop_back(); Reader short_read(short_data);
         check(!read_value(short_read,f,decoded),"truncated field accepted");
     }
