@@ -1,5 +1,9 @@
 # 能力路线图
 
+## 玩家联机全流程与 Fusion 选型
+
+2026-11-25，[联机同步全流程对比](fusion-session-comparison.md)贯通建房、首帧、对象权威、双向复制、输入重演、引擎呈现和恢复，分别列出 Fusion 3 Core/Godot 与 Fusion for Unity 2.1.4 的证据。开发安装 Core `929c4f1663907b23` 的 Release CTest 复跑 9/9 通过，Godot 4.6.1 原生 `shared`、`simulation` 双进程均通过，客人持续输入阶段结束时双方确认至 372、值均为 744。Unity 原版同场、现版整房带宽与跨网可达性的待证条件及复现入口见该文末节。[三轮逐项审核与复跑记录](../task/fusion-client-parity/验收/全流程文档审核.md)
+
 范围访谈已收口。实施依照[完整执行计划](../task/cross-engine-sync/执行计划.md)，最新复现命令和七个验收入口见[执行状态](../task/cross-engine-sync/执行状态.md)。
 
 Godot 4 接入独立登记，沿用 Cocos2d-x 的 M0–M6 门槛。[Godot 接入计划](../task/godot-platform/总纲.md) · [Godot 执行状态](../task/godot-platform/执行状态.md)

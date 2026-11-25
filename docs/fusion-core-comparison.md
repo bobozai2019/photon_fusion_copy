@@ -1,5 +1,7 @@
 # 自研 Netcode 与 Photon Fusion Core v3 架构对比
 
+从房间、输入和对象状态一路查到 Godot、Unity、Cocos2d-x 接入及掉线恢复，见[玩家联机同步全流程与技术选型对比](fusion-session-comparison.md)。本文保留逐 word 实现、迁移前抓包及早期车场的分版本证据。
+
 **最接近 Fusion 的部分是状态复制。** 两边都把引擎绑定、权威状态、差量选择、接收应用分开，并用最后变更记录与确认进度驱动重发。**影响架构最大的差异是权威和分发拓扑。** Racing 由各对象所属客户端提交状态，经 Photon Cloud 分发。自研项目由同一个房主模拟整个世界，再直接同步给各客人。这个差异决定了输入怎么走、谁发 ACK、掉线后从哪里恢复。
 
 自研侧以本仓库的 C++17 `core/`、车场运行时和 Windows x64 的 Godot/Cocos 适配器为准。原版以本地 **Fusion Godot Racing 3.0.0 Shared Authority** 随包源文件与指纹已核对的 Linux 原生库为静态证据。涉及原版其他拓扑、AOI 或重入 API 时，引用 Fusion Core v3 的公开契约。原版原生核心和云房间内部的完整源码未取得。[两套架构图与调用地址](architecture.md#12-fusion-core-v3-与自研-core-的源码对照) · [原版构建指纹](../research/fusion/builds/racing-3.0.0.md)
@@ -7,6 +9,8 @@
 ## 逐 word 复制实现
 
 当前 Core 源码采用定长 `Words`、发送扫描的 `Shadow` 和逐 word 版本。房主下行按该客人的对象 ACK 筛选。客机持写权时按该代次的样本 ACK 筛选。Fusion Core 的公开契约使用 word 变更 tick。本项目使用各路径的单调版本，并以有界内联槽保存字符串。流程、布局和协商见属性同步规格。[本项目状态布局和差量](specs/property-binding.md#状态布局和差量) · [Fusion Core 对象与 Shadow](https://doc.photonengine.com/fusion-core/v3/manual/objects#shadow-buffer)
+
+一个对象的 `Vector2` 只改一个分量时，按字段格式计算未压缩游戏负载为 63 B，逐 word 回归直接断言为 54 B。[包长回归](../tests/core/replication_test.cpp)
 
 后续字段级数据与包长记录采用迁移前的车场基线。
 
