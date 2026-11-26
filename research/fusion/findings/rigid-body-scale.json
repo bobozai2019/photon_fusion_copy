@@ -1,0 +1,619 @@
+{
+  "date": "2026-11-22",
+  "processor": "Intel i5-9300H",
+  "duration_seconds": 6,
+  "terminal_deadline_seconds": 8,
+  "runs": [
+    {
+      "backend": "native",
+      "workload": "lanes",
+      "count": 10,
+      "writer": {
+        "contact_bodies": 0,
+        "hz": 60.0032478212256,
+        "seconds": 6.016341,
+        "ticks": 361
+      },
+      "observer": {
+        "contact_bodies": 0,
+        "frames_with_missing_tags": 0,
+        "fully_tagged_ticks": 361,
+        "hz": 59.8377187806233,
+        "moved_20cm": 10,
+        "seen_moving_tags": 10,
+        "stamp_hz": 10.1110826748422,
+        "ticks": 361,
+        "worst_age_p95_ms": 135
+      },
+      "remote": {
+        "all_three": 10,
+        "asleep": 10,
+        "poses": 10,
+        "sample_tag": -1,
+        "sample_vx": 0,
+        "sample_x": 42,
+        "tags": 10
+      },
+      "authority": {
+        "all_three": 10,
+        "sample_sleeping": true,
+        "sample_vx": 0,
+        "sample_x": 42
+      }
+    },
+    {
+      "backend": "native",
+      "workload": "lanes",
+      "count": 100,
+      "writer": {
+        "contact_bodies": 0,
+        "hz": 60.0015922860224,
+        "seconds": 6.016507,
+        "ticks": 361
+      },
+      "observer": {
+        "contact_bodies": 0,
+        "frames_with_missing_tags": 1,
+        "fully_tagged_ticks": 361,
+        "hz": 59.9936990043201,
+        "moved_20cm": 100,
+        "seen_moving_tags": 100,
+        "stamp_hz": 10.1094354675788,
+        "ticks": 362,
+        "worst_age_p95_ms": 136
+      },
+      "remote": {
+        "all_three": 100,
+        "asleep": 100,
+        "poses": 100,
+        "sample_tag": -1,
+        "sample_vx": 0,
+        "sample_x": 42,
+        "tags": 100
+      },
+      "authority": {
+        "all_three": 100,
+        "sample_sleeping": true,
+        "sample_vx": 0,
+        "sample_x": 42
+      }
+    },
+    {
+      "backend": "native",
+      "workload": "lanes",
+      "count": 300,
+      "writer": {
+        "contact_bodies": 0,
+        "hz": 59.9657595512962,
+        "seconds": 6.003426,
+        "ticks": 360
+      },
+      "observer": {
+        "contact_bodies": 0,
+        "frames_with_missing_tags": 1,
+        "fully_tagged_ticks": 357,
+        "hz": 59.5502558415391,
+        "moved_20cm": 300,
+        "seen_moving_tags": 300,
+        "stamp_hz": 9.33120349680877,
+        "ticks": 358,
+        "worst_age_p95_ms": 270
+      },
+      "remote": {
+        "all_three": 300,
+        "asleep": 300,
+        "poses": 300,
+        "sample_tag": -1,
+        "sample_vx": 0,
+        "sample_x": 42,
+        "tags": 300
+      },
+      "authority": {
+        "all_three": 300,
+        "sample_sleeping": true,
+        "sample_vx": 0,
+        "sample_x": 42
+      }
+    },
+    {
+      "backend": "native",
+      "workload": "lanes",
+      "count": 1000,
+      "writer": {
+        "contact_bodies": 0,
+        "hz": 21.1528080519246,
+        "seconds": 6.003931,
+        "ticks": 127
+      },
+      "observer": {
+        "contact_bodies": 0,
+        "frames_with_missing_tags": 16,
+        "fully_tagged_ticks": 120,
+        "hz": 21.7475847388243,
+        "moved_20cm": 1000,
+        "seen_moving_tags": 1000,
+        "stamp_hz": 1.6630505976748,
+        "ticks": 136,
+        "worst_age_p95_ms": 1144
+      },
+      "remote": {
+        "all_three": 1000,
+        "asleep": 1000,
+        "poses": 1000,
+        "sample_tag": -1,
+        "sample_vx": 0,
+        "sample_x": 42,
+        "tags": 1000
+      },
+      "authority": {
+        "all_three": 1000,
+        "sample_sleeping": true,
+        "sample_vx": 0,
+        "sample_x": 42
+      }
+    },
+    {
+      "backend": "native",
+      "workload": "pairs",
+      "count": 10,
+      "writer": {
+        "contact_bodies": 10,
+        "hz": 60.0021108775849,
+        "seconds": 6.016455,
+        "ticks": 361
+      },
+      "observer": {
+        "contact_bodies": 10,
+        "frames_with_missing_tags": 0,
+        "fully_tagged_ticks": 360,
+        "hz": 60.0057205453587,
+        "moved_20cm": 10,
+        "seen_moving_tags": 10,
+        "stamp_hz": 10.0009534242264,
+        "ticks": 360,
+        "worst_age_p95_ms": 144
+      },
+      "remote": {
+        "all_three": 10,
+        "asleep": 10,
+        "poses": 10,
+        "sample_tag": -1,
+        "sample_vx": 0,
+        "sample_x": 42,
+        "tags": 10
+      },
+      "authority": {
+        "all_three": 10,
+        "sample_sleeping": true,
+        "sample_vx": 0,
+        "sample_x": 42
+      }
+    },
+    {
+      "backend": "native",
+      "workload": "pairs",
+      "count": 100,
+      "writer": {
+        "contact_bodies": 100,
+        "hz": 60.0027591296442,
+        "seconds": 6.01639,
+        "ticks": 361
+      },
+      "observer": {
+        "contact_bodies": 100,
+        "frames_with_missing_tags": 1,
+        "fully_tagged_ticks": 361,
+        "hz": 60.002111676527,
+        "moved_20cm": 100,
+        "seen_moving_tags": 100,
+        "stamp_hz": 10.1108530725639,
+        "ticks": 362,
+        "worst_age_p95_ms": 135
+      },
+      "remote": {
+        "all_three": 100,
+        "asleep": 100,
+        "poses": 100,
+        "sample_tag": -1,
+        "sample_vx": 0,
+        "sample_x": 42,
+        "tags": 100
+      },
+      "authority": {
+        "all_three": 100,
+        "sample_sleeping": true,
+        "sample_vx": 0,
+        "sample_x": 42
+      }
+    },
+    {
+      "backend": "native",
+      "workload": "pairs",
+      "count": 300,
+      "writer": {
+        "contact_bodies": 300,
+        "hz": 60.7039832623318,
+        "seconds": 6.012785,
+        "ticks": 365
+      },
+      "observer": {
+        "contact_bodies": 300,
+        "frames_with_missing_tags": 6,
+        "fully_tagged_ticks": 355,
+        "hz": 59.6553408550841,
+        "moved_20cm": 300,
+        "seen_moving_tags": 300,
+        "stamp_hz": 9.98992854799451,
+        "ticks": 361,
+        "worst_age_p95_ms": 234
+      },
+      "remote": {
+        "all_three": 300,
+        "asleep": 300,
+        "poses": 300,
+        "sample_tag": -1,
+        "sample_vx": 0,
+        "sample_x": 42,
+        "tags": 300
+      },
+      "authority": {
+        "all_three": 300,
+        "sample_sleeping": true,
+        "sample_vx": 0,
+        "sample_x": 42
+      }
+    },
+    {
+      "backend": "native",
+      "workload": "pairs",
+      "count": 1000,
+      "writer": {
+        "contact_bodies": 1000,
+        "hz": 21.2331200842424,
+        "seconds": 6.028318,
+        "ticks": 128
+      },
+      "observer": {
+        "contact_bodies": 1000,
+        "frames_with_missing_tags": 8,
+        "fully_tagged_ticks": 128,
+        "hz": 21.9104070566977,
+        "moved_20cm": 1000,
+        "seen_moving_tags": 1000,
+        "stamp_hz": 1.66776863125687,
+        "ticks": 136,
+        "worst_age_p95_ms": 1031
+      },
+      "remote": {
+        "all_three": 1000,
+        "asleep": 1000,
+        "poses": 1000,
+        "sample_tag": -1,
+        "sample_vx": 0,
+        "sample_x": 42,
+        "tags": 1000
+      },
+      "authority": {
+        "all_three": 1000,
+        "sample_sleeping": true,
+        "sample_vx": 0,
+        "sample_x": 42
+      }
+    },
+    {
+      "backend": "fusion",
+      "workload": "lanes",
+      "count": 10,
+      "writer": {
+        "contact_bodies": 0,
+        "hz": 59.6986630991588,
+        "seconds": 6.013535,
+        "ticks": 359
+      },
+      "observer": {
+        "contact_bodies": 0,
+        "frames_with_missing_tags": 0,
+        "fully_tagged_ticks": 356,
+        "hz": 59.8135865889874,
+        "moved_20cm": 10,
+        "seen_moving_tags": 10,
+        "stamp_hz": 7.56070616995627,
+        "ticks": 356,
+        "worst_age_p95_ms": 946
+      },
+      "remote": {
+        "all_three": 0,
+        "asleep": 0,
+        "poses": 0,
+        "sample_tag": -1,
+        "sample_vx": -2.79999995231628,
+        "sample_x": -23.2364387512207,
+        "tags": 10
+      },
+      "authority": {
+        "all_three": 10,
+        "sample_sleeping": true,
+        "sample_vx": 0,
+        "sample_x": 42
+      }
+    },
+    {
+      "backend": "fusion",
+      "workload": "lanes",
+      "count": 100,
+      "writer": {
+        "contact_bodies": 0,
+        "hz": 59.9893019078264,
+        "seconds": 6.00107,
+        "ticks": 360
+      },
+      "observer": {
+        "contact_bodies": 0,
+        "frames_with_missing_tags": 0,
+        "fully_tagged_ticks": 397,
+        "hz": 59.9159365826787,
+        "moved_20cm": 100,
+        "seen_moving_tags": 100,
+        "stamp_hz": 1.81106105539583,
+        "ticks": 397,
+        "worst_age_p95_ms": 2281
+      },
+      "remote": {
+        "all_three": 0,
+        "asleep": 0,
+        "poses": 0,
+        "sample_tag": -1,
+        "sample_vx": -2.59999990463257,
+        "sample_x": -21.2796306610107,
+        "tags": 100
+      },
+      "authority": {
+        "all_three": 100,
+        "sample_sleeping": true,
+        "sample_vx": 0,
+        "sample_x": 42
+      }
+    },
+    {
+      "backend": "fusion",
+      "workload": "lanes",
+      "count": 300,
+      "writer": {
+        "contact_bodies": 0,
+        "hz": 59.9284853408266,
+        "seconds": 6.00716,
+        "ticks": 360
+      },
+      "observer": {
+        "contact_bodies": 0,
+        "frames_with_missing_tags": 0,
+        "fully_tagged_ticks": 376,
+        "hz": 55.0690633426043,
+        "moved_20cm": 299,
+        "seen_moving_tags": 300,
+        "stamp_hz": 2.63628494725233,
+        "ticks": 376,
+        "worst_age_p95_ms": 2405
+      },
+      "remote": {
+        "all_three": 1,
+        "asleep": 1,
+        "poses": 1,
+        "sample_tag": -1,
+        "sample_vx": 2.79999995231628,
+        "sample_x": 21.8992538452148,
+        "tags": 300
+      },
+      "authority": {
+        "all_three": 300,
+        "sample_sleeping": true,
+        "sample_vx": 0,
+        "sample_x": 42
+      }
+    },
+    {
+      "backend": "fusion",
+      "workload": "pairs",
+      "count": 10,
+      "writer": {
+        "contact_bodies": 10,
+        "hz": 59.8704304101873,
+        "seconds": 6.012985,
+        "ticks": 360
+      },
+      "observer": {
+        "contact_bodies": 10,
+        "frames_with_missing_tags": 0,
+        "fully_tagged_ticks": 347,
+        "hz": 60.0590205360311,
+        "moved_20cm": 10,
+        "seen_moving_tags": 10,
+        "stamp_hz": 4.15393801978313,
+        "ticks": 347,
+        "worst_age_p95_ms": 1313
+      },
+      "remote": {
+        "all_three": 2,
+        "asleep": 2,
+        "poses": 2,
+        "sample_tag": -1,
+        "sample_vx": -0.0999999046325684,
+        "sample_x": -1.10571146011353,
+        "tags": 10
+      }
+    },
+    {
+      "backend": "fusion",
+      "workload": "pairs",
+      "count": 100,
+      "writer": {
+        "contact_bodies": 100,
+        "hz": 59.7968074501159,
+        "seconds": 6.003665,
+        "ticks": 359
+      },
+      "observer": {
+        "contact_bodies": 100,
+        "frames_with_missing_tags": 0,
+        "fully_tagged_ticks": 292,
+        "hz": 60.3771088049261,
+        "moved_20cm": 100,
+        "seen_moving_tags": 100,
+        "stamp_hz": 3.72187657016668,
+        "ticks": 292,
+        "worst_age_p95_ms": 1793
+      },
+      "remote": {
+        "all_three": 0,
+        "asleep": 0,
+        "poses": 0,
+        "sample_tag": -1,
+        "sample_vx": -2,
+        "sample_x": -17.4268264770508,
+        "tags": 100
+      }
+    },
+    {
+      "backend": "fusion",
+      "workload": "pairs",
+      "count": 300,
+      "writer": {
+        "contact_bodies": 300,
+        "hz": 59.580117832545,
+        "seconds": 6.0255,
+        "ticks": 359
+      },
+      "observer": {
+        "contact_bodies": 300,
+        "frames_with_missing_tags": 0,
+        "fully_tagged_ticks": 639,
+        "hz": 59.5340135800905,
+        "moved_20cm": 300,
+        "seen_moving_tags": 300,
+        "stamp_hz": 1.86334940782756,
+        "ticks": 639,
+        "worst_age_p95_ms": 5796
+      },
+      "remote": {
+        "all_three": 0,
+        "asleep": 0,
+        "poses": 0,
+        "sample_tag": -1,
+        "sample_vx": -2,
+        "sample_x": -16.3767566680908,
+        "tags": 300
+      }
+    },
+    {
+      "backend": "fusion",
+      "workload": "pairs",
+      "count": 100,
+      "writer": {
+        "contact_bodies": 100,
+        "hz": 59.9681668980716,
+        "seconds": 6.003185,
+        "ticks": 360
+      },
+      "observer": {
+        "contact_bodies": 100,
+        "frames_with_missing_tags": 0,
+        "fully_tagged_ticks": 362,
+        "hz": 59.9563577340803,
+        "moved_20cm": 100,
+        "seen_moving_tags": 100,
+        "stamp_hz": 6.95626249953418,
+        "ticks": 362,
+        "worst_age_p95_ms": 747
+      },
+      "remote": {
+        "all_three": 0,
+        "asleep": 0,
+        "poses": 0,
+        "sample_tag": -1,
+        "sample_vx": -2.40000009536743,
+        "sample_x": -21.120397567749,
+        "tags": 100
+      },
+      "authority": {
+        "all_three": 100,
+        "sample_sleeping": true,
+        "sample_vx": 0,
+        "sample_x": 42
+      }
+    },
+    {
+      "backend": "fusion",
+      "workload": "pairs",
+      "count": 1000,
+      "writer": {
+        "contact_bodies": 1000,
+        "hz": 56.4484932402929,
+        "seconds": 6.02319,
+        "ticks": 340
+      },
+      "observer": {
+        "contact_bodies": 1000,
+        "frames_with_missing_tags": 0,
+        "fully_tagged_ticks": 206,
+        "hz": 29.9393147530334,
+        "moved_20cm": 1000,
+        "seen_moving_tags": 1000,
+        "stamp_hz": 1.59870127322023,
+        "ticks": 206,
+        "worst_age_p95_ms": 2572
+      },
+      "remote": {
+        "all_three": 0,
+        "asleep": 0,
+        "poses": 0,
+        "sample_tag": -1,
+        "sample_vx": -2.59999990463257,
+        "sample_x": -8.78952598571777,
+        "tags": 1000
+      },
+      "authority": {
+        "all_three": 1000,
+        "sample_sleeping": true,
+        "sample_vx": 0,
+        "sample_x": 42
+      }
+    },
+    {
+      "backend": "fusion",
+      "workload": "lanes",
+      "count": 1,
+      "writer": {
+        "contact_bodies": 0,
+        "hz": 59.7632875784497,
+        "seconds": 6.023765,
+        "ticks": 360
+      },
+      "observer": {
+        "contact_bodies": 0,
+        "frames_with_missing_tags": 0,
+        "fully_tagged_ticks": 357,
+        "hz": 60.269745094431,
+        "moved_20cm": 1,
+        "seen_moving_tags": 1,
+        "stamp_hz": 6.92173543101309,
+        "ticks": 357,
+        "worst_age_p95_ms": 890
+      },
+      "remote": {
+        "all_three": 0,
+        "asleep": 0,
+        "poses": 0,
+        "sample_tag": -1,
+        "sample_vx": -2,
+        "sample_x": -16.5410995483398,
+        "tags": 1
+      },
+      "authority": {
+        "all_three": 1,
+        "sample_sleeping": true,
+        "sample_vx": 0,
+        "sample_x": 42
+      }
+    }
+  ]
+}

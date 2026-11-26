@@ -1,0 +1,472 @@
+{
+  "environment": "Windows x64, local IPv4 loopback",
+  "ctest": {
+    "Debug": [
+      10,
+      10
+    ],
+    "Release": [
+      10,
+      10
+    ]
+  },
+  "plates": {
+    "cocos": {
+      "players": {
+        "cocos": {
+          "player": 1,
+          "first": 2,
+          "second": 3
+        },
+        "godot": {
+          "player": 2,
+          "first": 2,
+          "second": 3
+        },
+        "unity": {
+          "player": 3,
+          "first": 2,
+          "second": 3
+        }
+      },
+      "deadline_ms": 3200,
+      "wall_spread_ms": 28
+    },
+    "godot": {
+      "players": {
+        "godot": {
+          "player": 1,
+          "first": 2,
+          "second": 3
+        },
+        "cocos": {
+          "player": 2,
+          "first": 2,
+          "second": 3
+        },
+        "unity": {
+          "player": 3,
+          "first": 2,
+          "second": 3
+        }
+      },
+      "deadline_ms": 3200,
+      "wall_spread_ms": 22
+    },
+    "unity": {
+      "players": {
+        "unity": {
+          "player": 1,
+          "first": 2,
+          "second": 3
+        },
+        "cocos": {
+          "player": 2,
+          "first": 2,
+          "second": 3
+        },
+        "godot": {
+          "player": 3,
+          "first": 2,
+          "second": 3
+        }
+      },
+      "deadline_ms": 3200,
+      "wall_spread_ms": 33
+    }
+  },
+  "forecast": {
+    "cocos": {
+      "cocos": {
+        "contact": 1,
+        "slept": 1,
+        "woke": 1,
+        "final_mm": 8359
+      },
+      "godot": {
+        "contact": 1,
+        "slept": 1,
+        "woke": 1,
+        "final_mm": 8359
+      },
+      "unity": {
+        "contact": 1,
+        "slept": 1,
+        "woke": 1,
+        "final_mm": 8359
+      }
+    },
+    "godot": {
+      "godot": {
+        "contact": 1,
+        "slept": 1,
+        "woke": 1,
+        "final_mm": 8349
+      },
+      "cocos": {
+        "contact": 1,
+        "slept": 1,
+        "woke": 1,
+        "final_mm": 8349
+      },
+      "unity": {
+        "contact": 1,
+        "slept": 1,
+        "woke": 1,
+        "final_mm": 8349
+      }
+    },
+    "unity": {
+      "unity": {
+        "contact": 1,
+        "slept": 1,
+        "woke": 1,
+        "final_mm": 8360
+      },
+      "cocos": {
+        "contact": 1,
+        "slept": 1,
+        "woke": 1,
+        "final_mm": 8360
+      },
+      "godot": {
+        "contact": 1,
+        "slept": 1,
+        "woke": 1,
+        "final_mm": 8360
+      }
+    }
+  },
+  "puzzle": {
+    "local_without_downlink": {
+      "object": 1,
+      "writer": 2,
+      "epoch": 1,
+      "confirmed": 0,
+      "public": 2,
+      "cell": 5,
+      "facing": 1,
+      "protected": 0
+    },
+    "handoff_observed_ms": 99,
+    "final": {
+      "A": {
+        "x": {
+          "object": 1,
+          "writer": 3,
+          "epoch": 2,
+          "confirmed": 1,
+          "public": 9,
+          "cell": 9,
+          "facing": 3,
+          "protected": 1
+        },
+        "y": {
+          "object": 2,
+          "writer": 3,
+          "epoch": 1,
+          "confirmed": 1,
+          "public": 7,
+          "cell": 7
+        },
+        "traffic": {
+          "tcp_tx": 905,
+          "tcp_rx": 173,
+          "udp_tx": 1803,
+          "udp_rx": 1829
+        }
+      },
+      "B": {
+        "x": {
+          "object": 1,
+          "writer": 3,
+          "epoch": 2,
+          "confirmed": 0,
+          "public": 9,
+          "cell": 9,
+          "facing": 3,
+          "protected": 1
+        },
+        "y": {
+          "object": 2,
+          "writer": 3,
+          "epoch": 1,
+          "confirmed": 0,
+          "public": 7,
+          "cell": 7
+        },
+        "traffic": {
+          "tcp_tx": 94,
+          "tcp_rx": 475,
+          "udp_tx": 916,
+          "udp_rx": 1001
+        }
+      },
+      "C": {
+        "x": {
+          "object": 1,
+          "writer": 3,
+          "epoch": 2,
+          "confirmed": 1,
+          "public": 9,
+          "cell": 9,
+          "facing": 3,
+          "protected": 1
+        },
+        "y": {
+          "object": 2,
+          "writer": 3,
+          "epoch": 1,
+          "confirmed": 1,
+          "public": 7,
+          "cell": 7
+        },
+        "traffic": {
+          "tcp_tx": 89,
+          "tcp_rx": 435,
+          "udp_tx": 913,
+          "udp_rx": 802
+        }
+      }
+    },
+    "interest_reentry": {
+      "object": 3,
+      "present": 1,
+      "scene": 20,
+      "score": 16777219
+    },
+    "claim_epoch_after_release": 6,
+    "interest_key_switch": true,
+    "late_player": 5,
+    "read_only_spectator": 4,
+    "full_rejection": 3,
+    "clock_difference_ms": 24
+  },
+  "room_processes": "passed",
+  "migration": {
+    "checkpoint_tick": 20,
+    "survivors": [
+      2,
+      3
+    ],
+    "term": 2,
+    "round": 1,
+    "restored_value": 77,
+    "next_value": 88,
+    "new_epoch": 2,
+    "directory_port": 43491,
+    "piece": 7,
+    "platform_mm": 3000,
+    "model_confirmed": [
+      2,
+      2
+    ],
+    "resume_and_write_ms": 1782
+  },
+  "yard": [
+    {
+      "scenario": "yard_stress",
+      "command": "python -B tools/verify_yard.py stress --platform cocos2dx --fault --seconds 10 --port 43500",
+      "exit_code": 0,
+      "participants": 4,
+      "object_count": 100,
+      "agreed_digest": "12918851976728775203",
+      "rejoin_ms": 0,
+      "faults": {
+        "dropped": 184,
+        "duplicated": 256,
+        "reordered": 229
+      }
+    },
+    {
+      "scenario": "yard_stress_ca",
+      "command": "python -B tools/verify_yard.py stress --platform cocos2dx --fault --seconds 10 --authority --port 43502",
+      "exit_code": 0,
+      "participants": 4,
+      "object_count": 100,
+      "agreed_digest": "12272630517614032386",
+      "rejoin_ms": 1200,
+      "faults": {
+        "dropped": 181,
+        "duplicated": 252,
+        "reordered": 229
+      },
+      "submissions": 557,
+      "accepted": 350
+    },
+    {
+      "scenario": "cocos2dx_cocos2dx",
+      "command": "python -B tools/verify_yard.py play --platform cocos2dx --guest-platform cocos2dx --typed-profile --port 43510",
+      "exit_code": 0,
+      "participants": 2,
+      "object_count": 6,
+      "agreed_digest": "16288198263109273497",
+      "rejoin_ms": 1183,
+      "faults": {
+        "dropped": 0,
+        "duplicated": 0,
+        "reordered": 0
+      }
+    },
+    {
+      "scenario": "cocos2dx_godot",
+      "command": "python -B tools/verify_yard.py play --platform cocos2dx --guest-platform godot --typed-profile --fault --port 43511",
+      "exit_code": 0,
+      "participants": 2,
+      "object_count": 6,
+      "agreed_digest": "6066622779679569679",
+      "rejoin_ms": 1216,
+      "faults": {
+        "dropped": 26,
+        "duplicated": 39,
+        "reordered": 33
+      }
+    },
+    {
+      "scenario": "cocos2dx_unity",
+      "command": "python -B tools/verify_yard.py play --platform cocos2dx --guest-platform unity --typed-profile --fault --port 43512",
+      "exit_code": 0,
+      "participants": 2,
+      "object_count": 6,
+      "agreed_digest": "6507569109291904861",
+      "rejoin_ms": 1233,
+      "faults": {
+        "dropped": 26,
+        "duplicated": 39,
+        "reordered": 34
+      }
+    },
+    {
+      "scenario": "cocos2dx_ca",
+      "command": "python -B tools/verify_yard.py play --platform cocos2dx --authority --port 43513",
+      "exit_code": 0,
+      "participants": 2,
+      "object_count": 5,
+      "agreed_digest": "10668711394731400798",
+      "rejoin_ms": 1183,
+      "faults": {
+        "dropped": 0,
+        "duplicated": 0,
+        "reordered": 0
+      },
+      "submissions": 135,
+      "accepted": 89
+    },
+    {
+      "scenario": "godot_cocos2dx",
+      "command": "python -B tools/verify_yard.py play --platform godot --guest-platform cocos2dx --typed-profile --fault --port 43514",
+      "exit_code": 0,
+      "participants": 2,
+      "object_count": 6,
+      "agreed_digest": "16242903003241610518",
+      "rejoin_ms": 1200,
+      "faults": {
+        "dropped": 26,
+        "duplicated": 40,
+        "reordered": 34
+      }
+    },
+    {
+      "scenario": "godot_godot",
+      "command": "python -B tools/verify_yard.py play --platform godot --guest-platform godot --typed-profile --port 43515",
+      "exit_code": 0,
+      "participants": 2,
+      "object_count": 6,
+      "agreed_digest": "7694701339932656032",
+      "rejoin_ms": 1216,
+      "faults": {
+        "dropped": 0,
+        "duplicated": 0,
+        "reordered": 0
+      }
+    },
+    {
+      "scenario": "godot_unity",
+      "command": "python -B tools/verify_yard.py play --platform godot --guest-platform unity --typed-profile --fault --port 43516",
+      "exit_code": 0,
+      "participants": 2,
+      "object_count": 6,
+      "agreed_digest": "14589615190368335872",
+      "rejoin_ms": 1199,
+      "faults": {
+        "dropped": 26,
+        "duplicated": 40,
+        "reordered": 33
+      }
+    },
+    {
+      "scenario": "godot_ca",
+      "command": "python -B tools/verify_yard.py play --platform godot --authority --port 43517",
+      "exit_code": 0,
+      "participants": 2,
+      "object_count": 5,
+      "agreed_digest": "14741380705154400798",
+      "rejoin_ms": 1233,
+      "faults": {
+        "dropped": 0,
+        "duplicated": 0,
+        "reordered": 0
+      },
+      "submissions": 135,
+      "accepted": 86
+    },
+    {
+      "scenario": "unity_cocos2dx",
+      "command": "python -B tools/verify_yard.py play --platform unity --guest-platform cocos2dx --typed-profile --fault --port 43518",
+      "exit_code": 0,
+      "participants": 2,
+      "object_count": 6,
+      "agreed_digest": "204840134457495129",
+      "rejoin_ms": 1200,
+      "faults": {
+        "dropped": 26,
+        "duplicated": 40,
+        "reordered": 33
+      }
+    },
+    {
+      "scenario": "unity_godot",
+      "command": "python -B tools/verify_yard.py play --platform unity --guest-platform godot --typed-profile --fault --port 43519",
+      "exit_code": 0,
+      "participants": 2,
+      "object_count": 6,
+      "agreed_digest": "15534729871203626454",
+      "rejoin_ms": 1199,
+      "faults": {
+        "dropped": 26,
+        "duplicated": 40,
+        "reordered": 33
+      }
+    },
+    {
+      "scenario": "unity_unity",
+      "command": "python -B tools/verify_yard.py play --platform unity --guest-platform unity --typed-profile --port 43520",
+      "exit_code": 0,
+      "participants": 2,
+      "object_count": 6,
+      "agreed_digest": "17469675023603615246",
+      "rejoin_ms": 1250,
+      "faults": {
+        "dropped": 0,
+        "duplicated": 0,
+        "reordered": 0
+      }
+    },
+    {
+      "scenario": "unity_ca",
+      "command": "python -B tools/verify_yard.py play --platform unity --authority --port 43521",
+      "exit_code": 0,
+      "participants": 2,
+      "object_count": 5,
+      "agreed_digest": "16720703880652957520",
+      "rejoin_ms": 1249,
+      "faults": {
+        "dropped": 0,
+        "duplicated": 0,
+        "reordered": 0
+      },
+      "submissions": 132,
+      "accepted": 84
+    }
+  ]
+}

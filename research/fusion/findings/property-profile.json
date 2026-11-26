@@ -1,0 +1,1754 @@
+{
+  "tested": "2026-11-22",
+  "cpu": "i5-9300H",
+  "fields": 5000,
+  "objects": 250,
+  "fields_per_object": 20,
+  "native_dll_sha256": "f6a81be7db7638bc15558294b6cb571aafbf7b7a50693f8b3299ae39a7ce8b55",
+  "runs": [
+    {
+      "backend": "native",
+      "variant": "stock",
+      "workload": "idle",
+      "benchmark": {
+        "objects": 250,
+        "properties": 5000,
+        "workload": "idle",
+        "owner": {
+          "correct": 5000,
+          "reads": 545000,
+          "seconds": 6.045655,
+          "sets": 0,
+          "ticks": 110
+        },
+        "remote": {
+          "correct": 5000,
+          "reads": 530000,
+          "seconds": 6.030323,
+          "sets": 0,
+          "ticks": 107
+        }
+      },
+      "profile": {
+        "A": {
+          "wall_s": 6.155626600142568,
+          "process_cpu_s": 6.140625
+        },
+        "B": {
+          "wall_s": 6.1550712999887764,
+          "process_cpu_s": 6.140625
+        }
+      },
+      "meter": {
+        "A": {
+          "advance_us": 3849,
+          "apply_us": 0,
+          "elapsed_us": 6043721,
+          "replica_calls": 27250,
+          "replica_us": 5990468,
+          "sample_us": 5153617,
+          "sync_us": 471224,
+          "ticks": 109
+        },
+        "B": {
+          "advance_us": 1190,
+          "apply_us": 0,
+          "elapsed_us": 6028183,
+          "replica_calls": 26500,
+          "replica_us": 5981225,
+          "sample_us": 5078017,
+          "sync_us": 538255,
+          "ticks": 106
+        }
+      },
+      "local_edit_after_profile": {
+        "baseline": 47938707,
+        "proxy_local": 0,
+        "proxy_after_750ms": 47938707,
+        "owner_before_sibling": 47938707,
+        "proxy_on_sibling": [
+          47938707,
+          222079034
+        ],
+        "proxy_on_target": 365247635
+      }
+    },
+    {
+      "backend": "native",
+      "variant": "stock",
+      "workload": "sparse",
+      "benchmark": {
+        "objects": 250,
+        "properties": 5000,
+        "workload": "sparse",
+        "waves": 60,
+        "written_changes": 30000,
+        "observed_by_stop": 23888,
+        "observed_including_drain": 27388,
+        "source_seconds": 6.006589,
+        "source_tick_hz": 18.64619004230188,
+        "source_wave_gap_p95_ms": 126,
+        "observed_per_second_while_writing": 3976.9659618795295,
+        "waves_seen": 60,
+        "waves_fully_seen": 47,
+        "first_field_p95_ms": 781,
+        "after_stop_to_all_ms": 1157,
+        "owner_correct": 5000,
+        "remote_correct": 5000,
+        "field_errors": 0,
+        "owner_gets": 585000,
+        "owner_sets": 30000,
+        "remote_gets": 618459,
+        "remote_sets": 53479,
+        "wave_counts": [500, 320, 320, 320, 320, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 320, 320, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 256, 256, 256, 300, 300, 300, 300, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500]
+      },
+      "profile": {
+        "A": {
+          "wall_s": 6.0643499998841435,
+          "process_cpu_s": 6.0625
+        },
+        "B": {
+          "wall_s": 6.0637741999235,
+          "process_cpu_s": 6.078125
+        }
+      },
+      "meter": {
+        "A": {
+          "advance_us": 117443,
+          "apply_us": 0,
+          "elapsed_us": 6000087,
+          "replica_calls": 27750,
+          "replica_us": 5722089,
+          "sample_us": 4955790,
+          "sync_us": 425055,
+          "ticks": 111
+        },
+        "B": {
+          "advance_us": 27042,
+          "apply_us": 599002,
+          "elapsed_us": 6043136,
+          "replica_calls": 25000,
+          "replica_us": 5969809,
+          "sample_us": 4555197,
+          "sync_us": 504379,
+          "ticks": 100
+        }
+      }
+    },
+    {
+      "backend": "native",
+      "variant": "stock",
+      "workload": "dense",
+      "benchmark": {
+        "objects": 250,
+        "properties": 5000,
+        "workload": "dense",
+        "waves": 60,
+        "written_changes": 300000,
+        "observed_by_stop": 31400,
+        "observed_including_drain": 37680,
+        "source_seconds": 6.042127,
+        "source_tick_hz": 17.543490893190427,
+        "source_wave_gap_p95_ms": 129,
+        "observed_per_second_while_writing": 5196.845415529995,
+        "waves_seen": 12,
+        "waves_fully_seen": 6,
+        "first_field_p95_ms": 623,
+        "after_stop_to_all_ms": 745,
+        "owner_correct": 5000,
+        "remote_correct": 5000,
+        "field_errors": 0,
+        "owner_gets": 825000,
+        "owner_sets": 300000,
+        "remote_gets": 602659,
+        "remote_sets": 37679,
+        "wave_counts": [0, 1280, 0, 0, 0, 5000, 0, 0, 0, 0, 1280, 0, 0, 0, 0, 0, 0, 0, 0, 5000, 0, 0, 0, 0, 1280, 0, 0, 0, 0, 0, 0, 0, 0, 5000, 0, 0, 0, 1280, 0, 0, 0, 0, 5000, 0, 0, 0, 0, 1280, 0, 0, 0, 5000, 0, 0, 0, 0, 1280, 0, 0, 5000]
+      },
+      "profile": {
+        "A": {
+          "wall_s": 6.149200600106269,
+          "process_cpu_s": 6.125
+        },
+        "B": {
+          "wall_s": 6.1489136999007314,
+          "process_cpu_s": 6.125
+        }
+      },
+      "meter": {
+        "A": {
+          "advance_us": 160973,
+          "apply_us": 0,
+          "elapsed_us": 6034495,
+          "replica_calls": 26250,
+          "replica_us": 5356584,
+          "sample_us": 4671564,
+          "sync_us": 366957,
+          "ticks": 105
+        },
+        "B": {
+          "advance_us": 24725,
+          "apply_us": 448746,
+          "elapsed_us": 6044609,
+          "replica_calls": 26500,
+          "replica_us": 5974874,
+          "sample_us": 4812472,
+          "sync_us": 392086,
+          "ticks": 106
+        }
+      }
+    },
+    {
+      "backend": "fusion",
+      "variant": "stock",
+      "workload": "idle",
+      "benchmark": {
+        "objects": 250,
+        "properties": 5000,
+        "workload": "idle",
+        "owner": {
+          "correct": 5000,
+          "reads": 1800000,
+          "seconds": 6.012265,
+          "sets": 0,
+          "ticks": 361
+        },
+        "remote": {
+          "correct": 5000,
+          "reads": 0,
+          "seconds": 6.004295,
+          "sets": 0,
+          "ticks": 362
+        }
+      },
+      "profile": {
+        "A": {
+          "duration_s": 7.215108,
+          "game_window_s": 6.011225,
+          "samples": 1960,
+          "uncropped_samples": 2214,
+          "leaf_samples": {
+            "browser_js": 1528,
+            "godot.side.wasm": 316,
+            "fusion_extension": 85,
+            "godot.wasm": 18,
+            "(idle)": 10,
+            "(garbage collector)": 3
+          },
+          "inclusive_samples": {
+            "browser_js": 1943,
+            "godot.side.wasm": 1947,
+            "(root)": 1960,
+            "fusion_extension": 437,
+            "godot.wasm": 46,
+            "(idle)": 10,
+            "(garbage collector)": 3
+          },
+          "fusion_stacks_top": [
+            [
+              "wasm-function[6436] <- wasm-function[1479] <- wasm-function[2080]",
+              308
+            ],
+            [
+              "wasm-function[1479] <- wasm-function[2080] <- wasm-function[3015]",
+              48
+            ],
+            [
+              "wasm-function[8068] <- wasm-function[8092] <- wasm-function[7878]",
+              16
+            ],
+            [
+              "wasm-function[8977] <- wasm-function[8903] <- wasm-function[8900]",
+              12
+            ],
+            [
+              "wasm-function[3072] <- wasm-function[1479] <- wasm-function[2080]",
+              11
+            ],
+            [
+              "wasm-function[2526] <- wasm-function[1479] <- wasm-function[2080]",
+              11
+            ],
+            [
+              "wasm-function[8903] <- wasm-function[8900] <- wasm-function[1479]",
+              4
+            ],
+            [
+              "wasm-function[8074] <- wasm-function[8077] <- wasm-function[8093]",
+              4
+            ],
+            [
+              "wasm-function[2545] <- wasm-function[1479] <- wasm-function[2080]",
+              3
+            ],
+            [
+              "wasm-function[6075] <- wasm-function[2647] <- wasm-function[1479]",
+              3
+            ],
+            [
+              "wasm-function[8872] <- wasm-function[2545] <- wasm-function[1479]",
+              2
+            ],
+            [
+              "wasm-function[6421] <- wasm-function[1479] <- wasm-function[2080]",
+              2
+            ]
+          ],
+          "leaf_frames_top": [
+            [
+              "browser_js / getParameter",
+              1487
+            ],
+            [
+              "godot.side.wasm / wasm-function[6809]",
+              125
+            ],
+            [
+              "fusion_extension / wasm-function[1479]",
+              31
+            ],
+            [
+              "godot.side.wasm / wasm-function[6961]",
+              24
+            ],
+            [
+              "godot.side.wasm / wasm-function[60978]",
+              22
+            ],
+            [
+              "godot.side.wasm / wasm-function[6948]",
+              21
+            ],
+            [
+              "fusion_extension / wasm-function[6436]",
+              20
+            ],
+            [
+              "godot.wasm / wasm-function[1785]",
+              15
+            ]
+          ],
+          "matched_exports": {
+            "7878": "_ZN9ExitGames6Photon8Internal8PeerBase7serviceEb",
+            "8068": "_ZN9ExitGames6Photon8Internal13SocketConnect7serviceEv",
+            "8074": "_ZN9ExitGames6Photon8Internal13SocketConnect10sendBufferEPKcRi",
+            "8077": "_ZN9ExitGames6Photon8Internal13SocketConnect11sendPackageEPKhi",
+            "8092": "_ZN9ExitGames6Photon8Internal5TPeer12serviceBasicEv",
+            "8093": "_ZN9ExitGames6Photon8Internal5TPeer20sendOutgoingCommandsEv",
+            "8872": "_ZN10FusionCore6Client9CanModifyEPKNS_6ObjectE",
+            "8900": "_ZN10FusionCore6Client14UpdateFrameEndEv",
+            "8903": "_ZN10FusionCore6Client16PacketQueueStateEv",
+            "8977": "_ZN10FusionCore6Client15WriteObjectRootERNS_11WriteBufferEPNS_20ObjectPacketEnvelopeEPNS_10ObjectRootEb"
+          },
+          "wasm_scripts": [
+            {
+              "module": "godot.wasm",
+              "length": 1508244
+            },
+            {
+              "module": "godot.side.wasm",
+              "length": 39391004
+            },
+            {
+              "module": "fusion_extension",
+              "length": 3433355
+            }
+          ],
+          "cdp_seconds": {
+            "Timestamp": 6.657280999934301,
+            "ProcessTime": 2.366581,
+            "ThreadTime": 1.9783269999999997,
+            "TaskDuration": 6.517119999999999,
+            "ScriptDuration": 6.435084000000001
+          }
+        },
+        "B": {
+          "duration_s": 6.765276,
+          "game_window_s": 6.003475,
+          "samples": 1970,
+          "uncropped_samples": 2044,
+          "leaf_samples": {
+            "browser_js": 1909,
+            "(idle)": 39,
+            "godot.side.wasm": 10,
+            "fusion_extension": 9,
+            "godot.wasm": 2,
+            "(program)": 1
+          },
+          "inclusive_samples": {
+            "browser_js": 1930,
+            "(root)": 1970,
+            "godot.side.wasm": 1929,
+            "unmapped_wasm": 1929,
+            "(idle)": 39,
+            "fusion_extension": 19,
+            "godot.wasm": 6,
+            "(program)": 1
+          },
+          "fusion_stacks_top": [
+            [
+              "wasm-function[1462] <- wasm-function[1460] <- wasm-function[1479]",
+              3
+            ],
+            [
+              "wasm-function[2647] <- wasm-function[1479] <- wasm-function[2080]",
+              2
+            ],
+            [
+              "wasm-function[6430] <- wasm-function[2528] <- wasm-function[2647]",
+              2
+            ],
+            [
+              "wasm-function[8076] <- wasm-function[8084] <- wasm-function[8068]",
+              2
+            ],
+            [
+              "wasm-function[6075] <- wasm-function[2647] <- wasm-function[1479]",
+              2
+            ],
+            [
+              "wasm-function[8084] <- wasm-function[8068] <- wasm-function[8092]",
+              1
+            ],
+            [
+              "wasm-function[8092] <- wasm-function[7878] <- wasm-function[8195]",
+              1
+            ],
+            [
+              "wasm-function[7878] <- wasm-function[8195] <- wasm-function[8410]",
+              1
+            ],
+            [
+              "wasm-function[7230] <- wasm-function[6624] <- wasm-function[7430]",
+              1
+            ],
+            [
+              "wasm-function[2528] <- wasm-function[2647] <- wasm-function[1479]",
+              1
+            ],
+            [
+              "wasm-function[8074] <- wasm-function[8077] <- wasm-function[8093]",
+              1
+            ],
+            [
+              "wasm-function[6421] <- wasm-function[1479] <- wasm-function[2080]",
+              1
+            ]
+          ],
+          "leaf_frames_top": [
+            [
+              "browser_js / getParameter",
+              1902
+            ],
+            [
+              "(idle) / (idle)",
+              39
+            ],
+            [
+              "fusion_extension / wasm-function[2647]",
+              2
+            ],
+            [
+              "fusion_extension / wasm-function[1462]",
+              2
+            ],
+            [
+              "browser_js / recvmsg",
+              2
+            ],
+            [
+              "godot.side.wasm / wasm-function[3032]",
+              2
+            ],
+            [
+              "godot.side.wasm / wasm-function[55511]",
+              1
+            ],
+            [
+              "fusion_extension / wasm-function[8084]",
+              1
+            ]
+          ],
+          "matched_exports": {
+            "6624": "_ZN9ExitGames6Common7Helpers9LockguardC1ERNS1_8SpinlockE",
+            "7230": "_ZN9ExitGames6Common7Helpers8Spinlock4lockEv",
+            "7430": "_ZN9ExitGames6Common16MemoryManagement8Internal17MemoryPoolManager7deallocEPv",
+            "7878": "_ZN9ExitGames6Photon8Internal8PeerBase7serviceEb",
+            "8068": "_ZN9ExitGames6Photon8Internal13SocketConnect7serviceEv",
+            "8074": "_ZN9ExitGames6Photon8Internal13SocketConnect10sendBufferEPKcRi",
+            "8076": "_ZN9ExitGames6Photon8Internal13SocketConnect10recvBufferEPhiPi",
+            "8077": "_ZN9ExitGames6Photon8Internal13SocketConnect11sendPackageEPKhi",
+            "8084": "_ZN9ExitGames6Photon8Internal8TConnect10recvBufferERNS_6Common7Helpers13SharedPointerIA_hEEPi",
+            "8092": "_ZN9ExitGames6Photon8Internal5TPeer12serviceBasicEv",
+            "8093": "_ZN9ExitGames6Photon8Internal5TPeer20sendOutgoingCommandsEv",
+            "8195": "_ZN9ExitGames6Photon10PhotonPeer7serviceEb",
+            "8410": "_ZN9ExitGames13LoadBalancing6Client7serviceEb"
+          },
+          "wasm_scripts": [
+            {
+              "module": "godot.wasm",
+              "length": 1508244
+            },
+            {
+              "module": "godot.side.wasm",
+              "length": 39391004
+            },
+            {
+              "module": "fusion_extension",
+              "length": 3433355
+            }
+          ],
+          "cdp_seconds": {
+            "Timestamp": 6.237079000100493,
+            "ProcessTime": 0.7069720000000004,
+            "ThreadTime": 0.418168,
+            "TaskDuration": 6.092997,
+            "ScriptDuration": 6.019211
+          }
+        }
+      },
+      "meter": {
+        "A": {
+          "elapsed_us": 6011265,
+          "ticks": 360
+        },
+        "B": {
+          "elapsed_us": 6003485,
+          "ticks": 361
+        }
+      },
+      "local_edit_after_profile": {
+        "baseline": 47938707,
+        "proxy_local": 0,
+        "proxy_after_750ms": 0,
+        "owner_before_sibling": 47938707,
+        "proxy_on_sibling": [
+          0,
+          222079034
+        ],
+        "proxy_on_target": 365247635
+      }
+    },
+    {
+      "backend": "fusion",
+      "variant": "stock",
+      "workload": "sparse",
+      "benchmark": {
+        "objects": 250,
+        "properties": 5000,
+        "workload": "sparse",
+        "waves": 60,
+        "written_changes": 30000,
+        "observed_by_stop": 15500,
+        "observed_including_drain": 25500,
+        "source_seconds": 6.012745,
+        "source_tick_hz": 60.03913354050438,
+        "source_wave_gap_p95_ms": 122,
+        "observed_per_second_while_writing": 2577.8575342875843,
+        "waves_seen": 51,
+        "waves_fully_seen": 51,
+        "first_field_p95_ms": 7118,
+        "after_stop_to_all_ms": null,
+        "owner_correct": 5000,
+        "remote_correct": 3500,
+        "field_errors": 0,
+        "owner_gets": 1830000,
+        "owner_sets": 30000,
+        "remote_gets": 25499,
+        "remote_sets": 25499,
+        "wave_counts": [500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 0, 0, 0, 0, 0, 0, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 0, 0, 0]
+      },
+      "profile": {
+        "A": {
+          "duration_s": 7.495502,
+          "game_window_s": 6.00765999975586,
+          "samples": 1964,
+          "uncropped_samples": 2250,
+          "leaf_samples": {
+            "browser_js": 1436,
+            "godot.side.wasm": 392,
+            "godot.wasm": 21,
+            "fusion_extension": 93,
+            "(idle)": 10,
+            "(garbage collector)": 10,
+            "(program)": 2
+          },
+          "inclusive_samples": {
+            "browser_js": 1941,
+            "godot.side.wasm": 1942,
+            "(root)": 1964,
+            "fusion_extension": 436,
+            "godot.wasm": 36,
+            "(idle)": 10,
+            "(garbage collector)": 10,
+            "(program)": 2
+          },
+          "fusion_stacks_top": [
+            [
+              "wasm-function[6436] <- wasm-function[1479] <- wasm-function[2080]",
+              306
+            ],
+            [
+              "wasm-function[1479] <- wasm-function[2080] <- wasm-function[3015]",
+              41
+            ],
+            [
+              "wasm-function[3072] <- wasm-function[1479] <- wasm-function[2080]",
+              14
+            ],
+            [
+              "wasm-function[2526] <- wasm-function[1479] <- wasm-function[2080]",
+              12
+            ],
+            [
+              "wasm-function[1462] <- wasm-function[1460] <- wasm-function[1479]",
+              8
+            ],
+            [
+              "wasm-function[8068] <- wasm-function[8092] <- wasm-function[7878]",
+              8
+            ],
+            [
+              "wasm-function[2080] <- wasm-function[3015]",
+              7
+            ],
+            [
+              "wasm-function[8872] <- wasm-function[2545] <- wasm-function[1479]",
+              5
+            ],
+            [
+              "wasm-function[6075] <- wasm-function[2647] <- wasm-function[1479]",
+              5
+            ],
+            [
+              "wasm-function[2528] <- wasm-function[2647] <- wasm-function[1479]",
+              4
+            ],
+            [
+              "wasm-function[8976] <- wasm-function[8985] <- wasm-function[9143]",
+              3
+            ],
+            [
+              "wasm-function[6421] <- wasm-function[1479] <- wasm-function[2080]",
+              3
+            ]
+          ],
+          "leaf_frames_top": [
+            [
+              "browser_js / getParameter",
+              1413
+            ],
+            [
+              "godot.side.wasm / wasm-function[6809]",
+              180
+            ],
+            [
+              "fusion_extension / wasm-function[1479]",
+              29
+            ],
+            [
+              "godot.side.wasm / wasm-function[60978]",
+              21
+            ],
+            [
+              "godot.side.wasm / wasm-function[1201]",
+              20
+            ],
+            [
+              "fusion_extension / wasm-function[6436]",
+              19
+            ],
+            [
+              "godot.side.wasm / wasm-function[6948]",
+              19
+            ],
+            [
+              "godot.wasm / wasm-function[1785]",
+              18
+            ]
+          ],
+          "matched_exports": {
+            "7878": "_ZN9ExitGames6Photon8Internal8PeerBase7serviceEb",
+            "8068": "_ZN9ExitGames6Photon8Internal13SocketConnect7serviceEv",
+            "8092": "_ZN9ExitGames6Photon8Internal5TPeer12serviceBasicEv",
+            "8872": "_ZN10FusionCore6Client9CanModifyEPKNS_6ObjectE",
+            "8976": "_ZN10FusionCore6Client19StatePacketReceivedENS_4DataE",
+            "8985": "_ZN10FusionCore20PhotonNotifyPlatform4RecvEPNS_6Notify10ConnectionERNS1_7ChannelENS_4DataE",
+            "9143": "_ZN10FusionCore6Notify10Connection14DeliverChannelERNS0_7ChannelE"
+          },
+          "wasm_scripts": [
+            {
+              "module": "godot.wasm",
+              "length": 1508244
+            },
+            {
+              "module": "godot.side.wasm",
+              "length": 39391004
+            },
+            {
+              "module": "fusion_extension",
+              "length": 3433355
+            }
+          ],
+          "cdp_seconds": {
+            "Timestamp": 6.774651999818161,
+            "ProcessTime": 2.8446300000000004,
+            "ThreadTime": 2.348521,
+            "TaskDuration": 6.655326,
+            "ScriptDuration": 6.545965
+          }
+        },
+        "B": {
+          "duration_s": 6.918122,
+          "game_window_s": 6.00965,
+          "samples": 2045,
+          "uncropped_samples": 2157,
+          "leaf_samples": {
+            "browser_js": 1927,
+            "godot.wasm": 6,
+            "(idle)": 30,
+            "fusion_extension": 23,
+            "godot.side.wasm": 54,
+            "(program)": 5
+          },
+          "inclusive_samples": {
+            "browser_js": 2010,
+            "godot.side.wasm": 2010,
+            "unmapped_wasm": 2010,
+            "(root)": 2045,
+            "fusion_extension": 85,
+            "godot.wasm": 17,
+            "(idle)": 30,
+            "(program)": 5
+          },
+          "fusion_stacks_top": [
+            [
+              "wasm-function[6435] <- wasm-function[2528] <- wasm-function[2647]",
+              41
+            ],
+            [
+              "wasm-function[2528] <- wasm-function[2647] <- wasm-function[1479]",
+              8
+            ],
+            [
+              "wasm-function[8076] <- wasm-function[8084] <- wasm-function[8068]",
+              7
+            ],
+            [
+              "wasm-function[2647] <- wasm-function[1479] <- wasm-function[2080]",
+              6
+            ],
+            [
+              "wasm-function[1462] <- wasm-function[1460] <- wasm-function[1479]",
+              5
+            ],
+            [
+              "wasm-function[7526] <- wasm-function[7527] <- wasm-function[7326]",
+              1
+            ],
+            [
+              "wasm-function[9212] <- js-to-wasm:ii:i <- wasm-function[9209]",
+              1
+            ],
+            [
+              "wasm-function[6496] <- js-to-wasm:ii:i <- wasm-function[6495]",
+              1
+            ],
+            [
+              "wasm-function[2080] <- wasm-function[3015]",
+              1
+            ],
+            [
+              "wasm-function[2545] <- wasm-function[1479] <- wasm-function[2080]",
+              1
+            ],
+            [
+              "wasm-function[8068] <- wasm-function[8092] <- wasm-function[7878]",
+              1
+            ],
+            [
+              "wasm-function[7526] <- wasm-function[9212] <- js-to-wasm:ii:i",
+              1
+            ]
+          ],
+          "leaf_frames_top": [
+            [
+              "browser_js / getParameter",
+              1911
+            ],
+            [
+              "godot.side.wasm / wasm-function[6809]",
+              33
+            ],
+            [
+              "(idle) / (idle)",
+              30
+            ],
+            [
+              "browser_js / recvmsg",
+              7
+            ],
+            [
+              "fusion_extension / wasm-function[2528]",
+              5
+            ],
+            [
+              "fusion_extension / wasm-function[2647]",
+              5
+            ],
+            [
+              "(program) / (program)",
+              5
+            ],
+            [
+              "fusion_extension / wasm-function[1462]",
+              4
+            ]
+          ],
+          "matched_exports": {
+            "6495": "_ZN9ExitGames6Common14DictionaryBaseC2Ev",
+            "6496": "_ZN9ExitGames6Common24AssociativeContainerBaseINS0_9HashtableENS0_6ObjectEEC2Ev",
+            "7326": "_ZNK9ExitGames6Common7JString18UTF8RepresentationEv",
+            "7526": "_ZN9ExitGames6Common10UTF8StringaSERKNS0_7JStringE",
+            "7527": "_ZN9ExitGames6Common10UTF8StringC1ERKNS0_7JStringE",
+            "7878": "_ZN9ExitGames6Photon8Internal8PeerBase7serviceEb",
+            "8068": "_ZN9ExitGames6Photon8Internal13SocketConnect7serviceEv",
+            "8076": "_ZN9ExitGames6Photon8Internal13SocketConnect10recvBufferEPhiPi",
+            "8084": "_ZN9ExitGames6Photon8Internal8TConnect10recvBufferERNS_6Common7Helpers13SharedPointerIA_hEEPi",
+            "8092": "_ZN9ExitGames6Photon8Internal5TPeer12serviceBasicEv",
+            "9209": "_ZN17PhotonMatchmaking19FromPhotonHashtableERKN9ExitGames6Common9HashtableE",
+            "9212": "_ZN17PhotonMatchmaking16ObjectToPropertyERKN9ExitGames6Common6ObjectERNSt3__27variantIJbasixfdNS5_12basic_stringIDuNS5_11char_traitsIDuEENS5_9allocatorIDuEEEENS5_6vectorIhNSA_IhEEEENSD_IiNSA_IiEEEENSD_IfNSA_IfEEEENSD_ISC_NSA_ISC_EEEEEEE"
+          },
+          "wasm_scripts": [
+            {
+              "module": "godot.wasm",
+              "length": 1508244
+            },
+            {
+              "module": "godot.side.wasm",
+              "length": 39391004
+            },
+            {
+              "module": "fusion_extension",
+              "length": 3433355
+            }
+          ],
+          "cdp_seconds": {
+            "Timestamp": 6.311920000007376,
+            "ProcessTime": 1.2661699999999998,
+            "ThreadTime": 0.601064,
+            "TaskDuration": 6.12773,
+            "ScriptDuration": 6.047066
+          }
+        }
+      },
+      "meter": {
+        "A": {
+          "elapsed_us": 6007675,
+          "ticks": 360
+        },
+        "B": {
+          "elapsed_us": 6009665,
+          "ticks": 361
+        }
+      }
+    },
+    {
+      "backend": "fusion",
+      "variant": "stock",
+      "workload": "dense",
+      "benchmark": {
+        "objects": 250,
+        "properties": 5000,
+        "workload": "dense",
+        "waves": 60,
+        "written_changes": 300000,
+        "observed_by_stop": 30000,
+        "observed_including_drain": 50000,
+        "source_seconds": 6.0304,
+        "source_tick_hz": 59.86335898116211,
+        "source_wave_gap_p95_ms": 125,
+        "observed_per_second_while_writing": 4974.794375165827,
+        "waves_seen": 10,
+        "waves_fully_seen": 10,
+        "first_field_p95_ms": 2627,
+        "after_stop_to_all_ms": 2658,
+        "owner_correct": 5000,
+        "remote_correct": 5000,
+        "field_errors": 0,
+        "owner_gets": 2100000,
+        "owner_sets": 300000,
+        "remote_gets": 49999,
+        "remote_sets": 49999,
+        "wave_counts": [5000, 0, 0, 0, 0, 5000, 0, 0, 0, 0, 5000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5000, 0, 0, 0, 0, 5000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5000, 0, 0, 0, 0, 5000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5000, 0, 0, 0, 0, 5000, 0, 0, 0, 5000]
+      },
+      "profile": {
+        "A": {
+          "duration_s": 7.55978,
+          "game_window_s": 6.012115,
+          "samples": 1778,
+          "uncropped_samples": 2050,
+          "leaf_samples": {
+            "browser_js": 1090,
+            "godot.side.wasm": 560,
+            "fusion_extension": 91,
+            "godot.wasm": 20,
+            "(garbage collector)": 9,
+            "(idle)": 7,
+            "(program)": 1
+          },
+          "inclusive_samples": {
+            "godot.side.wasm": 1761,
+            "browser_js": 1759,
+            "(root)": 1778,
+            "fusion_extension": 401,
+            "godot.wasm": 43,
+            "(garbage collector)": 9,
+            "(idle)": 7,
+            "(program)": 1
+          },
+          "fusion_stacks_top": [
+            [
+              "wasm-function[6436] <- wasm-function[1479] <- wasm-function[2080]",
+              282
+            ],
+            [
+              "wasm-function[1479] <- wasm-function[2080] <- wasm-function[3015]",
+              42
+            ],
+            [
+              "wasm-function[8068] <- wasm-function[8092] <- wasm-function[7878]",
+              11
+            ],
+            [
+              "wasm-function[1462] <- wasm-function[1460] <- wasm-function[1479]",
+              8
+            ],
+            [
+              "wasm-function[2526] <- wasm-function[1479] <- wasm-function[2080]",
+              8
+            ],
+            [
+              "wasm-function[2528] <- wasm-function[2647] <- wasm-function[1479]",
+              7
+            ],
+            [
+              "wasm-function[3072] <- wasm-function[1479] <- wasm-function[2080]",
+              7
+            ],
+            [
+              "wasm-function[2647] <- wasm-function[1479] <- wasm-function[2080]",
+              6
+            ],
+            [
+              "wasm-function[8074] <- wasm-function[8077] <- wasm-function[8093]",
+              5
+            ],
+            [
+              "wasm-function[8977] <- wasm-function[8903] <- wasm-function[8900]",
+              3
+            ],
+            [
+              "wasm-function[6431] <- wasm-function[1479] <- wasm-function[2080]",
+              3
+            ],
+            [
+              "wasm-function[8872] <- wasm-function[1479] <- wasm-function[2080]",
+              2
+            ]
+          ],
+          "leaf_frames_top": [
+            [
+              "browser_js / getParameter",
+              1061
+            ],
+            [
+              "godot.side.wasm / wasm-function[6809]",
+              310
+            ],
+            [
+              "fusion_extension / wasm-function[1479]",
+              29
+            ],
+            [
+              "godot.side.wasm / wasm-function[6948]",
+              27
+            ],
+            [
+              "godot.side.wasm / wasm-function[1201]",
+              24
+            ],
+            [
+              "godot.side.wasm / wasm-function[68235]",
+              24
+            ],
+            [
+              "fusion_extension / wasm-function[6436]",
+              21
+            ],
+            [
+              "godot.side.wasm / wasm-function[6961]",
+              19
+            ]
+          ],
+          "matched_exports": {
+            "7878": "_ZN9ExitGames6Photon8Internal8PeerBase7serviceEb",
+            "8068": "_ZN9ExitGames6Photon8Internal13SocketConnect7serviceEv",
+            "8074": "_ZN9ExitGames6Photon8Internal13SocketConnect10sendBufferEPKcRi",
+            "8077": "_ZN9ExitGames6Photon8Internal13SocketConnect11sendPackageEPKhi",
+            "8092": "_ZN9ExitGames6Photon8Internal5TPeer12serviceBasicEv",
+            "8093": "_ZN9ExitGames6Photon8Internal5TPeer20sendOutgoingCommandsEv",
+            "8872": "_ZN10FusionCore6Client9CanModifyEPKNS_6ObjectE",
+            "8900": "_ZN10FusionCore6Client14UpdateFrameEndEv",
+            "8903": "_ZN10FusionCore6Client16PacketQueueStateEv",
+            "8977": "_ZN10FusionCore6Client15WriteObjectRootERNS_11WriteBufferEPNS_20ObjectPacketEnvelopeEPNS_10ObjectRootEb"
+          },
+          "wasm_scripts": [
+            {
+              "module": "godot.wasm",
+              "length": 1508244
+            },
+            {
+              "module": "godot.side.wasm",
+              "length": 39391004
+            },
+            {
+              "module": "fusion_extension",
+              "length": 3433355
+            }
+          ],
+          "cdp_seconds": {
+            "Timestamp": 6.778848000103608,
+            "ProcessTime": 3.6216930000000005,
+            "ThreadTime": 3.138922,
+            "TaskDuration": 6.664013000000001,
+            "ScriptDuration": 6.573672
+          }
+        },
+        "B": {
+          "duration_s": 6.928257,
+          "game_window_s": 6.011,
+          "samples": 1789,
+          "uncropped_samples": 1881,
+          "leaf_samples": {
+            "godot.side.wasm": 61,
+            "browser_js": 1662,
+            "fusion_extension": 14,
+            "(idle)": 40,
+            "(program)": 5,
+            "godot.wasm": 7
+          },
+          "inclusive_samples": {
+            "godot.side.wasm": 1744,
+            "unmapped_wasm": 1743,
+            "browser_js": 1743,
+            "(root)": 1789,
+            "fusion_extension": 93,
+            "(idle)": 40,
+            "godot.wasm": 23,
+            "(program)": 5
+          },
+          "fusion_stacks_top": [
+            [
+              "wasm-function[2528] <- wasm-function[2647] <- wasm-function[1479]",
+              59
+            ],
+            [
+              "wasm-function[8076] <- wasm-function[8084] <- wasm-function[8068]",
+              10
+            ],
+            [
+              "wasm-function[1462] <- wasm-function[1460] <- wasm-function[1479]",
+              3
+            ],
+            [
+              "wasm-function[1479] <- wasm-function[2080] <- wasm-function[3015]",
+              2
+            ],
+            [
+              "wasm-function[8074] <- wasm-function[8077] <- wasm-function[8093]",
+              2
+            ],
+            [
+              "wasm-function[8903] <- wasm-function[8900] <- wasm-function[1479]",
+              2
+            ],
+            [
+              "wasm-function[8930] <- wasm-function[8976] <- wasm-function[9143]",
+              1
+            ],
+            [
+              "wasm-function[2080] <- wasm-function[3015]",
+              1
+            ],
+            [
+              "wasm-function[7860] <- wasm-function[8095] <- js-to-wasm:ii:",
+              1
+            ],
+            [
+              "wasm-function[6075] <- wasm-function[2647] <- wasm-function[1479]",
+              1
+            ],
+            [
+              "wasm-function[3072] <- wasm-function[2528] <- wasm-function[2647]",
+              1
+            ],
+            [
+              "wasm-function[6431] <- wasm-function[2528] <- wasm-function[2647]",
+              1
+            ]
+          ],
+          "leaf_frames_top": [
+            [
+              "browser_js / getParameter",
+              1641
+            ],
+            [
+              "(idle) / (idle)",
+              40
+            ],
+            [
+              "godot.side.wasm / wasm-function[6809]",
+              34
+            ],
+            [
+              "browser_js / recvmsg",
+              10
+            ],
+            [
+              "godot.side.wasm / wasm-function[68235]",
+              7
+            ],
+            [
+              "(program) / (program)",
+              5
+            ],
+            [
+              "godot.side.wasm / wasm-function[61031]",
+              3
+            ],
+            [
+              "fusion_extension / wasm-function[2528]",
+              3
+            ]
+          ],
+          "matched_exports": {
+            "7860": "_ZN9ExitGames6Photon8Internal9OperationC1ERKS2_",
+            "8068": "_ZN9ExitGames6Photon8Internal13SocketConnect7serviceEv",
+            "8074": "_ZN9ExitGames6Photon8Internal13SocketConnect10sendBufferEPKcRi",
+            "8076": "_ZN9ExitGames6Photon8Internal13SocketConnect10recvBufferEPhiPi",
+            "8077": "_ZN9ExitGames6Photon8Internal13SocketConnect11sendPackageEPKhi",
+            "8084": "_ZN9ExitGames6Photon8Internal8TConnect10recvBufferERNS_6Common7Helpers13SharedPointerIA_hEEPi",
+            "8093": "_ZN9ExitGames6Photon8Internal5TPeer20sendOutgoingCommandsEv",
+            "8095": "_ZN9ExitGames6Common17SequenceContainerINS0_7JVectorENS_6Photon8Internal9OperationEE15removeElementAtEj",
+            "8900": "_ZN10FusionCore6Client14UpdateFrameEndEv",
+            "8903": "_ZN10FusionCore6Client16PacketQueueStateEv",
+            "8930": "_ZN10FusionCore6Client18TryFireObjectReadyEPNS_10ObjectRootE",
+            "8976": "_ZN10FusionCore6Client19StatePacketReceivedENS_4DataE",
+            "9143": "_ZN10FusionCore6Notify10Connection14DeliverChannelERNS0_7ChannelE"
+          },
+          "wasm_scripts": [
+            {
+              "module": "godot.wasm",
+              "length": 1508244
+            },
+            {
+              "module": "godot.side.wasm",
+              "length": 39391004
+            },
+            {
+              "module": "fusion_extension",
+              "length": 3433355
+            }
+          ],
+          "cdp_seconds": {
+            "Timestamp": 6.284403000026941,
+            "ProcessTime": 1.4100340000000005,
+            "ThreadTime": 0.7030050000000001,
+            "TaskDuration": 6.101311,
+            "ScriptDuration": 6.0171280000000005
+          }
+        }
+      },
+      "meter": {
+        "A": {
+          "elapsed_us": 6012145,
+          "ticks": 360
+        },
+        "B": {
+          "elapsed_us": 6011015,
+          "ticks": 360
+        }
+      }
+    },
+    {
+      "backend": "native",
+      "variant": "cached",
+      "workload": "idle",
+      "benchmark": {
+        "objects": 250,
+        "properties": 5000,
+        "workload": "idle",
+        "owner": {
+          "correct": 5000,
+          "reads": 1170000,
+          "seconds": 6.006877,
+          "sets": 0,
+          "ticks": 235
+        },
+        "remote": {
+          "correct": 5000,
+          "reads": 1175000,
+          "seconds": 6.006008,
+          "sets": 0,
+          "ticks": 236
+        }
+      },
+      "profile": {
+        "A": {
+          "wall_s": 6.0653494000434875,
+          "process_cpu_s": 6.046875
+        },
+        "B": {
+          "wall_s": 6.0653031000401825,
+          "process_cpu_s": 6.0625
+        }
+      },
+      "meter": {
+        "A": {
+          "advance_us": 6034,
+          "apply_us": 0,
+          "elapsed_us": 6004157,
+          "replica_calls": 58500,
+          "replica_us": 5920263,
+          "sample_us": 4397452,
+          "sync_us": 828433,
+          "ticks": 234
+        },
+        "B": {
+          "advance_us": 1832,
+          "apply_us": 0,
+          "elapsed_us": 6003736,
+          "replica_calls": 58750,
+          "replica_us": 5924692,
+          "sample_us": 4432260,
+          "sync_us": 797021,
+          "ticks": 235
+        }
+      },
+      "local_edit_after_profile": {
+        "baseline": 47938707,
+        "proxy_local": 0,
+        "proxy_after_750ms": 47938707,
+        "owner_before_sibling": 47938707,
+        "proxy_on_sibling": [
+          47938707,
+          222079034
+        ],
+        "proxy_on_target": 365247635
+      }
+    },
+    {
+      "backend": "native",
+      "variant": "cached",
+      "workload": "sparse",
+      "benchmark": {
+        "objects": 250,
+        "properties": 5000,
+        "workload": "sparse",
+        "waves": 60,
+        "written_changes": 30000,
+        "observed_by_stop": 28808,
+        "observed_including_drain": 29848,
+        "source_seconds": 6.025773,
+        "source_tick_hz": 36.50983865472529,
+        "source_wave_gap_p95_ms": 118,
+        "observed_per_second_while_writing": 4780.79741802421,
+        "waves_seen": 60,
+        "waves_fully_seen": 56,
+        "first_field_p95_ms": 482,
+        "after_stop_to_all_ms": 574,
+        "owner_correct": 5000,
+        "remote_correct": 5000,
+        "field_errors": 0,
+        "owner_gets": 1125000,
+        "owner_sets": 30000,
+        "remote_gets": 989379,
+        "remote_sets": 104399,
+        "wave_counts": [500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 462, 462, 462, 462, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500]
+      },
+      "profile": {
+        "A": {
+          "wall_s": 6.0611515999771655,
+          "process_cpu_s": 6.046875
+        },
+        "B": {
+          "wall_s": 6.061087399953976,
+          "process_cpu_s": 6.0625
+        }
+      },
+      "meter": {
+        "A": {
+          "advance_us": 172587,
+          "apply_us": 0,
+          "elapsed_us": 6022330,
+          "replica_calls": 54750,
+          "replica_us": 5643106,
+          "sample_us": 4192298,
+          "sync_us": 779714,
+          "ticks": 219
+        },
+        "B": {
+          "advance_us": 42179,
+          "apply_us": 1255595,
+          "elapsed_us": 6002436,
+          "replica_calls": 42750,
+          "replica_us": 5885761,
+          "sample_us": 3265903,
+          "sync_us": 837693,
+          "ticks": 171
+        }
+      }
+    },
+    {
+      "backend": "native",
+      "variant": "packed",
+      "workload": "idle",
+      "benchmark": {
+        "objects": 250,
+        "properties": 5000,
+        "workload": "idle",
+        "owner": {
+          "correct": 5000,
+          "reads": 1800000,
+          "seconds": 6.008598,
+          "sets": 0,
+          "ticks": 361
+        },
+        "remote": {
+          "correct": 5000,
+          "reads": 1845000,
+          "seconds": 6.014353,
+          "sets": 0,
+          "ticks": 370
+        }
+      },
+      "profile": {
+        "A": {
+          "wall_s": 6.067699300125241,
+          "process_cpu_s": 4.484375
+        },
+        "B": {
+          "wall_s": 6.067639700137079,
+          "process_cpu_s": 4.5
+        }
+      },
+      "meter": {
+        "A": {
+          "advance_us": 44524,
+          "apply_us": 0,
+          "elapsed_us": 6004277,
+          "replica_calls": 90000,
+          "replica_us": 3855435,
+          "sample_us": 1646651,
+          "sync_us": 1212785,
+          "ticks": 360
+        },
+        "B": {
+          "advance_us": 14538,
+          "apply_us": 0,
+          "elapsed_us": 6012336,
+          "replica_calls": 92250,
+          "replica_us": 4141766,
+          "sample_us": 1651991,
+          "sync_us": 1487995,
+          "ticks": 369
+        }
+      },
+      "local_edit_after_profile": {
+        "baseline": 47938707,
+        "proxy_local": 0,
+        "proxy_after_750ms": 47938707,
+        "owner_before_sibling": 47938707,
+        "proxy_on_sibling": [
+          47938707,
+          222079034
+        ],
+        "proxy_on_target": 365247635
+      }
+    },
+    {
+      "backend": "native",
+      "variant": "packed",
+      "workload": "sparse",
+      "benchmark": {
+        "objects": 250,
+        "properties": 5000,
+        "workload": "sparse",
+        "waves": 60,
+        "written_changes": 30000,
+        "observed_by_stop": 29500,
+        "observed_including_drain": 30000,
+        "source_seconds": 6.008334,
+        "source_tick_hz": 60.249646574241716,
+        "source_wave_gap_p95_ms": 108,
+        "observed_per_second_while_writing": 4909.846889337377,
+        "waves_seen": 60,
+        "waves_fully_seen": 60,
+        "first_field_p95_ms": 253,
+        "after_stop_to_all_ms": 306,
+        "owner_correct": 5000,
+        "remote_correct": 5000,
+        "field_errors": 0,
+        "owner_gets": 1835000,
+        "owner_sets": 30000,
+        "remote_gets": 1518539,
+        "remote_sets": 163559,
+        "wave_counts": [500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500]
+      },
+      "profile": {
+        "A": {
+          "wall_s": 6.063296600012109,
+          "process_cpu_s": 5.296875
+        },
+        "B": {
+          "wall_s": 6.063196399947628,
+          "process_cpu_s": 6.046875
+        }
+      },
+      "meter": {
+        "A": {
+          "advance_us": 632933,
+          "apply_us": 0,
+          "elapsed_us": 6003470,
+          "replica_calls": 90250,
+          "replica_us": 4068924,
+          "sample_us": 1744845,
+          "sync_us": 1285817,
+          "ticks": 361
+        },
+        "B": {
+          "advance_us": 179208,
+          "apply_us": 1986884,
+          "elapsed_us": 6038030,
+          "replica_calls": 67750,
+          "replica_us": 5739299,
+          "sample_us": 1392354,
+          "sync_us": 1552208,
+          "ticks": 271
+        }
+      }
+    },
+    {
+      "backend": "fusion",
+      "variant": "stock",
+      "workload": "sparse",
+      "repeat": true,
+      "debug_metadata_after_observer_check": true,
+      "benchmark": {
+        "objects": 250,
+        "properties": 5000,
+        "workload": "sparse",
+        "waves": 60,
+        "written_changes": 30000,
+        "observed_by_stop": 17500,
+        "observed_including_drain": 29500,
+        "source_seconds": 6.02475,
+        "source_tick_hz": 59.91949873438732,
+        "source_wave_gap_p95_ms": 118,
+        "observed_per_second_while_writing": 2904.684841694676,
+        "waves_seen": 59,
+        "waves_fully_seen": 59,
+        "first_field_p95_ms": 2735,
+        "after_stop_to_all_ms": 2062,
+        "owner_correct": 5000,
+        "remote_correct": 5000,
+        "field_errors": 0,
+        "owner_gets": 1830000,
+        "owner_sets": 30000,
+        "remote_gets": 29499,
+        "remote_sets": 29499,
+        "wave_counts": [500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 0, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500]
+      },
+      "profile": {
+        "A": {
+          "duration_s": 7.223053,
+          "game_window_s": 6.019409999755859,
+          "samples": 2009,
+          "uncropped_samples": 2260,
+          "leaf_samples": {
+            "browser_js": 1549,
+            "godot.side.wasm": 371,
+            "fusion_extension": 69,
+            "godot.wasm": 14,
+            "(idle)": 6
+          },
+          "inclusive_samples": {
+            "(root)": 2009,
+            "browser_js": 2000,
+            "godot.side.wasm": 2002,
+            "fusion_extension": 386,
+            "godot.wasm": 29,
+            "(idle)": 6
+          },
+          "fusion_stacks_top": [
+            [
+              "wasm-function[6436] <- wasm-function[1479] <- wasm-function[2080]",
+              294
+            ],
+            [
+              "wasm-function[1479] <- wasm-function[2080] <- wasm-function[3015]",
+              35
+            ],
+            [
+              "wasm-function[8068] <- wasm-function[8092] <- wasm-function[7878]",
+              12
+            ],
+            [
+              "wasm-function[2526] <- wasm-function[1479] <- wasm-function[2080]",
+              8
+            ],
+            [
+              "wasm-function[3072] <- wasm-function[1479] <- wasm-function[2080]",
+              6
+            ],
+            [
+              "wasm-function[8872] <- wasm-function[2545] <- wasm-function[1479]",
+              4
+            ],
+            [
+              "wasm-function[7526] <- wasm-function[9212] <- js-to-wasm:ii:i",
+              4
+            ],
+            [
+              "wasm-function[2545] <- wasm-function[1479] <- wasm-function[2080]",
+              2
+            ],
+            [
+              "wasm-function[2080] <- wasm-function[3015]",
+              2
+            ],
+            [
+              "wasm-function[2528] <- wasm-function[2647] <- wasm-function[1479]",
+              2
+            ],
+            [
+              "wasm-function[7897] <- wasm-function[8107] <- wasm-function[7880]",
+              2
+            ],
+            [
+              "wasm-function[6421] <- wasm-function[1479] <- wasm-function[2080]",
+              2
+            ]
+          ],
+          "leaf_frames_top": [
+            [
+              "browser_js / getParameter",
+              1527
+            ],
+            [
+              "godot.side.wasm / wasm-function[6809]",
+              179
+            ],
+            [
+              "godot.side.wasm / wasm-function[6961]",
+              32
+            ],
+            [
+              "fusion_extension / wasm-function[1479]",
+              24
+            ],
+            [
+              "godot.side.wasm / wasm-function[60978]",
+              19
+            ],
+            [
+              "godot.side.wasm / wasm-function[68218]",
+              14
+            ],
+            [
+              "fusion_extension / wasm-function[6436]",
+              14
+            ],
+            [
+              "godot.side.wasm / wasm-function[6948]",
+              14
+            ]
+          ],
+          "matched_exports": {
+            "7526": "_ZN9ExitGames6Common10UTF8StringaSERKNS0_7JStringE",
+            "7878": "_ZN9ExitGames6Photon8Internal8PeerBase7serviceEb",
+            "7880": "_ZN9ExitGames6Photon8Internal8PeerBase8opCustomEPKNS0_16OperationRequestEbhbh",
+            "7897": "_ZN9ExitGames6Photon8Internal8PeerBase18serializeOperationEPKNS0_16OperationRequestEPPhPibh",
+            "8068": "_ZN9ExitGames6Photon8Internal13SocketConnect7serviceEv",
+            "8092": "_ZN9ExitGames6Photon8Internal5TPeer12serviceBasicEv",
+            "8107": "_ZN9ExitGames6Photon8Internal5TPeer18serializeOperationEPKNS0_16OperationRequestEPPhPibh",
+            "8872": "_ZN10FusionCore6Client9CanModifyEPKNS_6ObjectE",
+            "9212": "_ZN17PhotonMatchmaking16ObjectToPropertyERKN9ExitGames6Common6ObjectERNSt3__27variantIJbasixfdNS5_12basic_stringIDuNS5_11char_traitsIDuEENS5_9allocatorIDuEEEENS5_6vectorIhNSA_IhEEEENSD_IiNSA_IiEEEENSD_IfNSA_IfEEEENSD_ISC_NSA_ISC_EEEEEEE"
+          },
+          "wasm_scripts": [
+            {
+              "module": "godot.wasm",
+              "length": 1508244
+            },
+            {
+              "module": "godot.side.wasm",
+              "length": 39391004
+            },
+            {
+              "module": "fusion_extension",
+              "length": 3433355
+            }
+          ],
+          "cdp_seconds": {
+            "Timestamp": 6.64299299987033,
+            "ProcessTime": 2.4715430000000005,
+            "ThreadTime": 2.1915780000000002,
+            "TaskDuration": 6.530849,
+            "ScriptDuration": 6.464373
+          }
+        },
+        "B": {
+          "duration_s": 6.773245,
+          "game_window_s": 6.0068699997558594,
+          "samples": 1993,
+          "uncropped_samples": 2086,
+          "leaf_samples": {
+            "browser_js": 1918,
+            "(idle)": 29,
+            "godot.side.wasm": 34,
+            "godot.wasm": 5,
+            "fusion_extension": 4,
+            "(program)": 1,
+            "(garbage collector)": 2
+          },
+          "inclusive_samples": {
+            "(root)": 1993,
+            "browser_js": 1960,
+            "godot.side.wasm": 1960,
+            "unmapped_wasm": 1434,
+            "(idle)": 29,
+            "godot.wasm": 8,
+            "fusion_extension": 43,
+            "(program)": 1,
+            "(garbage collector)": 2
+          },
+          "fusion_stacks_top": [
+            [
+              "wasm-function[6435] <- wasm-function[2528] <- wasm-function[2647]",
+              25
+            ],
+            [
+              "wasm-function[8076] <- wasm-function[8084] <- wasm-function[8068]",
+              4
+            ],
+            [
+              "wasm-function[2528] <- wasm-function[2647] <- wasm-function[1479]",
+              4
+            ],
+            [
+              "wasm-function[6440] <- wasm-function[2617] <- wasm-function[2647]",
+              3
+            ],
+            [
+              "wasm-function[3032] <- wasm-function[2617] <- wasm-function[2647]",
+              2
+            ],
+            [
+              "wasm-function[3031] <- wasm-function[2617] <- wasm-function[2647]",
+              1
+            ],
+            [
+              "wasm-function[7526] <- wasm-function[9212] <- js-to-wasm:ii:i",
+              1
+            ],
+            [
+              "wasm-function[1462]",
+              1
+            ],
+            [
+              "wasm-function[8872] <- wasm-function[2545] <- wasm-function[1479]",
+              1
+            ],
+            [
+              "wasm-function[6075] <- wasm-function[2647] <- wasm-function[1479]",
+              1
+            ]
+          ],
+          "leaf_frames_top": [
+            [
+              "browser_js / getParameter",
+              1908
+            ],
+            [
+              "(idle) / (idle)",
+              29
+            ],
+            [
+              "godot.side.wasm / wasm-function[6809]",
+              18
+            ],
+            [
+              "browser_js / recvmsg",
+              3
+            ],
+            [
+              "godot.side.wasm / wasm-function[68235]",
+              3
+            ],
+            [
+              "godot.wasm / wasm-function[4490]",
+              2
+            ],
+            [
+              "(garbage collector) / (garbage collector)",
+              2
+            ],
+            [
+              "browser_js / wasm-to-js",
+              2
+            ]
+          ],
+          "matched_exports": {
+            "7526": "_ZN9ExitGames6Common10UTF8StringaSERKNS0_7JStringE",
+            "8068": "_ZN9ExitGames6Photon8Internal13SocketConnect7serviceEv",
+            "8076": "_ZN9ExitGames6Photon8Internal13SocketConnect10recvBufferEPhiPi",
+            "8084": "_ZN9ExitGames6Photon8Internal8TConnect10recvBufferERNS_6Common7Helpers13SharedPointerIA_hEEPi",
+            "8872": "_ZN10FusionCore6Client9CanModifyEPKNS_6ObjectE",
+            "9212": "_ZN17PhotonMatchmaking16ObjectToPropertyERKN9ExitGames6Common6ObjectERNSt3__27variantIJbasixfdNS5_12basic_stringIDuNS5_11char_traitsIDuEENS5_9allocatorIDuEEEENS5_6vectorIhNSA_IhEEEENSD_IiNSA_IiEEEENSD_IfNSA_IfEEEENSD_ISC_NSA_ISC_EEEEEEE"
+          },
+          "wasm_scripts": [
+            {
+              "module": "godot.wasm",
+              "length": 1508244
+            },
+            {
+              "module": "godot.side.wasm",
+              "length": 39391004
+            },
+            {
+              "module": "fusion_extension",
+              "length": 3433355
+            }
+          ],
+          "cdp_seconds": {
+            "Timestamp": 6.243014000123367,
+            "ProcessTime": 0.9337350000000004,
+            "ThreadTime": 0.6073109999999999,
+            "TaskDuration": 6.115501999999999,
+            "ScriptDuration": 6.026387
+          }
+        }
+      },
+      "meter": {
+        "A": {
+          "elapsed_us": 6019435,
+          "ticks": 360
+        },
+        "B": {
+          "elapsed_us": 6006890,
+          "ticks": 360
+        }
+      }
+    }
+  ]
+}

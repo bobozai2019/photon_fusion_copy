@@ -1,0 +1,259 @@
+{
+  "source": "Windows x64 loopback; three separately launched engine players. Steam skipped.",
+  "commands": {
+    "python -B tools/verify_plates.py --forecast --port 43476": {
+      "cocos": {
+        "cocos": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8359,
+          "max_sample_error_mm": 0
+        },
+        "godot": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8359,
+          "max_sample_error_mm": 109
+        },
+        "unity": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8359,
+          "max_sample_error_mm": 113
+        }
+      },
+      "godot": {
+        "godot": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8349,
+          "max_sample_error_mm": 0
+        },
+        "unity": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8349,
+          "max_sample_error_mm": 66
+        },
+        "cocos": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8349,
+          "max_sample_error_mm": 87
+        }
+      },
+      "unity": {
+        "unity": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8360,
+          "max_sample_error_mm": 0
+        },
+        "cocos": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8360,
+          "max_sample_error_mm": 107
+        },
+        "godot": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8360,
+          "max_sample_error_mm": 70
+        }
+      }
+    },
+    "python -B tools/verify_plates.py --forecast3d --port 43480": {
+      "cocos": {
+        "cocos": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8358,
+          "depth_mm": 2143,
+          "heading_mrad": 1086,
+          "max_sample_error_mm": 0
+        },
+        "godot": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8358,
+          "depth_mm": 2143,
+          "heading_mrad": 1086,
+          "max_sample_error_mm": 56
+        },
+        "unity": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8358,
+          "depth_mm": 2143,
+          "heading_mrad": 1086,
+          "max_sample_error_mm": 57
+        }
+      },
+      "godot": {
+        "godot": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8358,
+          "depth_mm": 2143,
+          "heading_mrad": 1086,
+          "max_sample_error_mm": 0
+        },
+        "unity": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8358,
+          "depth_mm": 2143,
+          "heading_mrad": 1086,
+          "max_sample_error_mm": 65
+        },
+        "cocos": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8358,
+          "depth_mm": 2143,
+          "heading_mrad": 1086,
+          "max_sample_error_mm": 63
+        }
+      },
+      "unity": {
+        "unity": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8360,
+          "depth_mm": 2143,
+          "heading_mrad": 1087,
+          "max_sample_error_mm": 0
+        },
+        "cocos": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8360,
+          "depth_mm": 2143,
+          "heading_mrad": 1087,
+          "max_sample_error_mm": 98
+        },
+        "godot": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8360,
+          "depth_mm": 2143,
+          "heading_mrad": 1087,
+          "max_sample_error_mm": 48
+        }
+      }
+    },
+    "python -B tools/verify_migration.py --chain --port 43490": {
+      "graceful_handoff": {
+        "player": 3,
+        "term": 3,
+        "restored": 89,
+        "written": 90
+      },
+      "checkpoint_tick": 20,
+      "survivors": [
+        2,
+        3
+      ],
+      "term": 2,
+      "round": 1,
+      "restored_value": 77,
+      "next_value": 88,
+      "new_epoch": 2,
+      "directory_port": 43491,
+      "piece": 7,
+      "platform_mm": 3000,
+      "model_confirmed": [
+        2,
+        2
+      ],
+      "resume_and_write_ms": 1811
+    }
+  },
+  "plates": {
+    "host_order": [
+      "cocos",
+      "godot",
+      "unity"
+    ],
+    "deadline_ms": 3200,
+    "observed_spread_ms": [
+      23,
+      38,
+      34
+    ],
+    "writer_payloads": [
+      [
+        2,
+        1,
+        3
+      ],
+      [
+        3,
+        2,
+        7
+      ]
+    ],
+    "charge_input": 5,
+    "charge_ack": 1,
+    "map_generations": {
+      "cancelled": 2,
+      "mounted_and_removed": 4
+    }
+  },
+  "core": {
+    "debug": [
+      11,
+      11
+    ],
+    "release": [
+      11,
+      11
+    ],
+    "input_trace": {
+      "unique": 60,
+      "host_callbacks": 60,
+      "guest_callbacks": 70,
+      "accepted_baselines": 15,
+      "confirmed": 60,
+      "final_sum": 1830
+    },
+    "codec": {
+      "frames": 600,
+      "delivered": 541,
+      "raw": 132682,
+      "encoded": 28754,
+      "peak_dictionary_payload_bytes": 6896,
+      "process_cpu_ms": 125,
+      "elapsed_us": 124561
+    }
+  },
+  "yard": {
+    "players": 4,
+    "objects": 100,
+    "cars": 4,
+    "measurement_ms": 10023,
+    "simulation_steps": 301,
+    "sends": 200,
+    "common_digest": "17736340503273206716",
+    "reconnect_ms": 1216
+  }
+}

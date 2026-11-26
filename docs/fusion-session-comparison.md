@@ -1,6 +1,8 @@
 # Photon Fusion 与 Netcode 的联机同步全流程对比
 
-**2026-11-25 · 玩家开房与共享权威 · Core、Godot、Unity、Cocos2d-x**
+**2026-11-26 · 玩家开房与共享权威 · Core、Godot、Unity、Cocos2d-x**
+
+下表标识此次对照所用的 SDK。后续工作区在可靠有序的 Game 通道上增加了持权上行状态及回执的协商合批；现行收发路径和条件见[运行时架构](architecture.md#一次状态更新怎样收发)。
 
 两套方案最接近的地方是**对象状态怎样从写者传到观察者**。双方都能把属性映射为定长 word，记录变化，在接收方缺少状态时补基线。最大的选型差异是**谁保存公共世界、谁给其他玩家构包、谁在房主离开后继续工作**。Fusion 3 Shared 把缓存和按兴趣分发交给 Photon 房间。Netcode 允许多名玩家分别持有对象写权，由一名玩家房主批准提交、保存公开版本并向每个客人分发。于是房主的上行、每连接压缩开销和退出行为都进入游戏的容量与恢复设计。[Fusion 3 拓扑](https://doc.photonengine.com/fusion-core/v3/getting-started/modes-and-topologies) · [本项目对象权威](specs/object-authority.md) · [实际构包入口](../core/session/game_session.cpp)
 
@@ -21,7 +23,7 @@
 | --- | --- | --- |
 | Fusion 3 Core 和 Godot | Core v3 官方手册。原版基线为 Racing 3.0.0 / Godot Preview 555，运行时报 SDK 3.0.0.2787、协议 8。Linux 编辑器库有具名路径，Windows 有布局和特定云房实验，Web 有 Cloud Asia 多端观测。Preview 684 的单机房实验另计。[构建指纹](../research/fusion/builds/racing-3.0.0.md) · [原版 Web 实验](../research/fusion/findings/client-audit.md) · [Windows 生成实验](../task/godot-platform/验收/T0.md) | 官方文档说明公开职责。555 的指令和回调计数只用于解释相应构建、端与场景。云端内部布局仍未知。 |
 | Fusion for Unity | Unity 系列取 2.1.4 Stable Build 2500。Runner、IL Weaver、网络对象与 Host 行为按 2.x 官方契约。项目已有同引擎检测计划，Fusion 和 Netcode 各自组双端、运行同一剧本的对照仍待验证。[Fusion 2.1.4 下载和引擎要求](https://doc.photonengine.com/fusion/v2/getting-started/sdk-download) · [本地检测范围](../task/unity-platform/Unity与Fusion对齐检测计划.md) | Unity 的属性、回调与拓扑可作 API 对比。Unity 私有快照布局、逐包 ACK 和 CPU 占比不能从 Godot 555 移植。 |
-| 当前项目 | `netcode` 工作树 HEAD `9828d9e` 加上本机未提交的会话和适配器实现。实读 Release Core ID `929c4f1663907b23`，Godot / Unity / Cocos 平台 ID 分别为 `cbd0dce8d269280e`、`d155c48545cdd908`、`4af80b708c71ecbb`。sync-lab 随附 Core 仍为 `5ce4ee1e67e62812`。[开发安装验收](sdk-validation.md) · [试验场版本与切换方式](../../examples/sync-lab/README.md) | 当前源码、开发安装、示例随附包和历史测试各有版本。最新逐 word 构建已验证 Core 和 Godot，Unity、Cocos 在该版的构建记录与旧版端到端记录分别使用。 |
+| 本文采样时的项目 | `netcode` 工作树 HEAD `9828d9e` 加上本机未提交的会话和适配器实现。实读 Release Core ID `929c4f1663907b23`，Godot / Unity / Cocos 平台 ID 分别为 `cbd0dce8d269280e`、`d155c48545cdd908`、`4af80b708c71ecbb`。sync-lab 随附 Core 仍为 `5ce4ee1e67e62812`。[开发安装验收](sdk-validation.md) · [试验场版本与切换方式](../../examples/sync-lab/README.md) | 当前源码、开发安装、示例随附包和历史测试各有版本。最新逐 word 构建已验证 Core 和 Godot，Unity、Cocos 在该版的构建记录与旧版端到端记录分别使用。 |
 
 ### 一次驾驶操作由谁接收
 
@@ -174,6 +176,7 @@ Unity Fusion 提供每 Runner 的统计与 Multi-Peer 编辑器运行，内置�
 | **本次复跑** · Godot 4.6.1 Windows，本机双进程，开发安装 `929c4f1663907b23/cbd0dce8d269280e` | 原生 `shared` 的房主和客人均 PASS。`simulation` 先后复跑两次，主客均 PASS，两次在客人持续输入阶段结束时均为双方 confirmed=372、value=744。该阶段客端 queue_peak 先后为 3、5，本轮两个命令退出码均为 0。[运行器](../tools/verify_godot_native.py) · [预测测试场景](../tests/godot_native/) | 当前 SDK 的 Shared 和玩家 Host 输入模型都能从真实 Godot 入口工作。开头另有一次 12 条突发输入，随后才开始单独统计持续输入的队列峰值。 |
 | **仓库验收** · 三种引擎各自开两个真实玩家进程 | 每引擎均验了 8 个实际字段、引用解析、2D/3D 刚体、写权后分数 7→42 和双向命名 RPC。Unity 另有 Windows Mono 双窗车场，Cocos 的百对象 Direct 负载用了两个真实窗口及两个轻量进程。[三端逐项断言](../task/gameplay-components/验收/本机.md) · [车场 M6](../task/cross-engine-sync/验收/M6.md) | 同引擎客户端是产品验收单位。历史混合引擎实验证明某些 Core 契约可复用，版本、资产和物理差异仍由各 SDK 验证。 |
 | **仓库验收** · 单对象包长与开发版 Godot 规模 | 未压缩的一个 Vector2 仅改一个分量，回归断言 word 消息为 54 B。按同一向量和当前字段格式计算，字段消息为 63 B（47 B 固定部分、8 B 掩码、8 B 值）。现版 sync-lab 1024 对象无窗口双端，客端 1023 个远端对象持续更新，可见数 1024→524→524→1024。[编码断言](../tests/core/replication_test.cpp) · [开发版 1024 验收](sdk-validation.md) | 证明该包变短、该规模仍正确推进。每连接压缩、消息边界、TCP/IP 重传和引擎成本会改变整房带宽／帧率。以前原生 C++ 迁移测到的 53.51 FPS 是另一构建的房主双窗口结果。[历史构建与窗口条件](../task/godot-platform/验收/T5.md) |
+| **Netcode 实测** · Godot TCP 回环，全量可见 | 1024 球，每球 8 属性，目标更新率 10 Hz。随附版下行 530.4–542.5 kB/s，逐 word 开发版 315.5–325.1 kB/s。开发版 1024 个同步节点满负载合计，房主 9.89–10.57 ms/物理步，客机 2.78–3.07 ms/物理步。[构建标识、上下行字节与分项计时](../task/godot-platform/验收/sync-lab单球同步开销.md) | 两种构建各跑两间无窗口双人房。流量为全部应用层消息，节点计时涵盖采样与写回。要单独衡量协议收益，须在同一构建切换能力协商。 |
 | **两套方案均有实测** · 8 玩家、512 对象、每对象 8 个共同类型字段，60 轮，交换 AOI | 两边核对各端 4096 个终值。Fusion 555 Web + Cloud Asia 主要写入端／最慢客端为 51.0／52.8 步每秒。8 端各写 3 个全局对象，主写端另写 488 个。历史 Netcode 原生采集版 Windows + TCP 回环转发为 60.1／55.2。该版房主步间隔 P95 为 53.4–54.6 ms，说明均值接近 60 也会有长步。[负载、逐房指标与限制](../task/godot-platform/验收/属性同步性能.md) | 可验证业务负载和终态，定位同一方案自己的回归。运行时、传输、缓存分发位置及房主负担不同，这两组数字不足以排列两套 Core 的 CPU／带宽效率。 |
 | **历史弱网诊断** · Netcode 原问题混合布局，8 人、512 对象，含普通容器和独立预测对象。新旧版使用相同受限缓冲，仅将客人 B 下行限至 8 KiB/s | 候选版启用按连接反压后，房主写入期队列峰值从 416.1 KiB 降至 171.4–179.7 KiB。另六名客人在解除限速前完成 AOI 切换，慢客人的数据年龄仍可达数秒。[反压实验](../task/godot-platform/验收/属性同步性能.md) | 房主为阻塞连接跳过 142–151 次普通快照构建，写入期队列积压下降。该实验未单独量出节省的 CPU 时间。可靠 FIFO 积压仍影响该连接的新鲜度。选择实时玩法传输时应同时看状态年龄和终值。 |
 | **历史寿命与恢复实验** · 555 两人 Shared、自研三进程接替和车场双端 | 555 留下的一人成为 Master，一个 MasterClient 对象保留值 8，离开者的 PlayerAttached 对象消失。Netcode 三进程有首任强退、二任主动交接，跟踪值 77→88→89→90。车场 Godot 凭票接回实测 1216 ms，含脚本安排的 1050 ms 离线等待。[555 实验](../research/fusion/findings/client-audit.md) · [三任接替](../task/fusion-client-parity/余项验收.md) · [车场接回](../task/godot-platform/验收/联机专项复测.md) | 可以分别判断客人接回、房主正常退、房主失联后的行为。恢复用时必须注明计时起点、参与人数、检查点条件和等待时间。 |
@@ -183,7 +186,7 @@ Unity Fusion 提供每 Runner 的统计与 Multi-Peer 编辑器运行，内置�
 | 待判断的主张 | 同一现象还可能怎样产生 | 区分方法及其对选型的影响 |
 | --- | --- | --- |
 | Unity 两套 SDK 的同一对象是否在业务回调里始终读到配套字段 | 最终血量与护盾都相同，可能是同 tick 原子可见，也可能是逐字段 setter 先后覆盖。 | 同一 Prefab 配两项相关字段，Fusion 端保留 `[Networked]` 自动属性，在 Spawned、FixedUpdateNetwork、变化通知和 Render 同读两项。Netcode 端在普通业务 setter、网络推进前后及显示时同读，记字段 ID、对象版本与各自的 tick／帧。再做迟入及 AOI 重入。决定现有 Unity 脚本能否直接移植。[Unity 对齐实验设计](../task/unity-platform/Unity与Fusion对齐检测计划.md) |
-| 逐 word 能节省多少真实带宽和房主 CPU | 一个对象的消息体缩小，整房流量变化也可能来自压缩锚点、AOI、不同发送频率，或一个端漏做了更新。 | 用同一构建，在测试夹具控制 `WordStateHello`／`WordStateSupported` 能力协商。下行可直接用 `AuthorityState::attach` 对照字段与 word 客户端，双向字段对照须持续屏蔽 Hello（客端按 30 tick 重试），只屏蔽 Supported 仍可能产生下行 word、上行字段。固定字节输入、字段容量、收件人、确认节奏与故障种子。分别量采样、打包、压缩、线上双向总字节、每客状态年龄、终值。Unity 另量 GC B/帧和 P/Invoke 次数。结论应标明构建和拓扑。[车场双向协商夹具](../../examples/tests/match_test.cpp) · [Core 编码专题](fusion-core-comparison.md) · [规模探针](../research/fusion/probes/README.md) |
+| 同一构建仅切换字段与 word 协议时，带宽与房主 CPU 改变多少 | 一个对象的消息体缩小，整房流量变化也可能来自压缩锚点、AOI、不同发送频率，或一个端漏做了更新。 | 用同一构建，在测试夹具控制 `WordStateHello`／`WordStateSupported` 能力协商。下行可直接用 `AuthorityState::attach` 对照字段与 word 客户端，双向字段对照须持续屏蔽 Hello（客端按 30 tick 重试），只屏蔽 Supported 仍可能产生下行 word、上行字段。固定字节输入、字段容量、收件人、确认节奏与故障种子。分别量采样、打包、压缩、线上双向总字节、每客状态年龄、终值。Unity 另量 GC B/帧和 P/Invoke 次数。结论应标明构建和拓扑。[车场双向协商夹具](../../examples/tests/match_test.cpp) · [Core 编码专题](fusion-core-comparison.md) · [规模探针](../research/fusion/probes/README.md) |
 | 同样“看起来很平滑”的碰撞能否满足玩法 | 远端可能在本地发生接触，也可能只是插值经过接触点，或被传送到最终静止位置。 | 同引擎同初态，逐步记录权威与代理的位姿、速度、接触、重置和睡眠，预测路径注入一次迟到输入，Forecast 和普通插值路径注入迟到状态，分别检查接触与碰撞事件的执行次数。用结果判断 Forecast、预测回放或普通插值的适用物体。[原版与项目刚体规模测量](../research/fusion/findings/rigid-body-scale.md) |
 | 目标网络下能否连续加入／掉线续玩 | 回环双端可经转发跑通。家庭 NAT、运营商网络、房主进程被杀和两人分区会产生不同结果。 | 在目标网络分别测可直连、需要中继、两人正常交接、两人突然失联和三人有热备。同时核对玩家号、原对象、任期及下一次可确认写入。依赖公网匹配或保局时，应按这组条件选房间入口。[公网证据范围](../task/public-connectivity/验收/公网验收.md) · [项目热备与席位条件](specs/game-session.md) |
 

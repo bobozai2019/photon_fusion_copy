@@ -12,4 +12,6 @@ Windows x64 SDK 提供 v1 C 表、纯 TCP 模块、Direct 兼容模块和宿主�
 
 TCP 接受数字 IPv4 加端口或带方括号的数字 IPv6 加端口。可选配置是 UTF-8 `queue_bytes=65538` 一类的字节值。帧由一个通道字节、二字节网络序长度和业务负载组成。默认每 peer 队列 512 KiB，容许最大长度的 Control 帧。直连可选配置 `timeout_ms=3000`，Control 和 Game 的业务负载均须非空。
 
+TCP 模块每次可把队首至多 16 个帧片段交给一次套接字写入，Windows 使用 `WSASend`，POSIX 使用 `sendmsg`。按套接字返回的字节数消耗原 FIFO，最后一个部分写入的帧保留偏移，统计仍在完整帧写出后结算。每 peer 每次轮询最多尝试写出 128 KiB。控制帧与游戏帧沿原字节流顺序交付。混合通道契约测试读取全部原始字节并检查关闭顺序。[Windows 写入接口](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-wsasend) · [POSIX 写入接口](https://www.man7.org/linux/man-pages/man3/sendmsg.3p.html) · [TCP 契约](../../tests/transport/tcp_contract.py)
+
 新 API 由 Godot 的 `NetcodeGame.open_with_provider`、`NetcodeRoom.open_with_provider`、`NetcodeSpawner.open_with_provider`，Unity 的 `NetcodeGame.OpenWithProvider` 以及 Cocos 的 `GameComponent::create_with_provider` 提供。同一 provider 配置可用来接回原席位。接回凭证属于客户端，经过应用自己保存和传回。Cocos 宿主把 SDK 的 `bin/netcode_transport_tcp.dll` 部署到应用可执行文件旁，Godot 导出时拷贝 DLL，Unity 的 UPM 包带 Win64 插件元数据。

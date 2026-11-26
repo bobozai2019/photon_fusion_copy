@@ -2,7 +2,7 @@
 
 ## 同引擎客户端同步
 
-每种适配器在自己的引擎内完成房主与客人的联机。验收在两个独立玩家进程中核对同一房间的对象身份、字段值、当前写者、RPC 和对象生命周期。支持票据且席位仍保留的会话允许客人断线后恢复原身份，再接收当前可见对象的权威状态。Godot 原生 `Netcode` 房间在断线时释放席位，玩家可按普通加入流程重新入房。[Godot 原生房间](godot-scene-sync.md#原生节点接入) · [票据与席位](room-rejoin.md)
+联机只支持同引擎房间。Godot 玩家加入 Godot 房主，Unity 玩家加入 Unity 房主，Cocos2d-x 玩家加入 Cocos2d-x 房主。双方须运行同一游戏，并使用兼容的对象模板、字段和 RPC 定义。验收在两个独立玩家进程中核对同一房间的对象身份、字段值、当前写者、RPC 和对象生命周期。支持票据且席位仍保留的会话允许客人断线后恢复原身份，再接收当前可见对象的权威状态。Godot 原生 `Netcode` 房间在断线时释放席位，玩家可按普通加入流程重新入房。[Godot 原生房间](godot-scene-sync.md#原生节点接入) · [票据与席位](room-rejoin.md)
 
 例如，在 Godot 双端用例中，房主生成一扇门，把开关字段的写权交给另一位 Godot 玩家。客人开门后，房主应读到门已开启。写权交回后，上一代写者迟到的更新应被拒绝。Unity 和 Cocos2d-x 分别用本引擎的两个玩家进程验证同一行为。
 
@@ -31,7 +31,7 @@ Godot 玩法可以直接使用原生 `@rpc` 注解，并在 Replicator 上选择
 | 客人按模板申请创建 | 房主调用 `allow_spawn`，客人调用 `request_spawn` | 房主调用 `AllowSpawn`，客人调用 `RequestSpawn` | `world().allow_spawn` 注册工厂，`request_spawn` 返回请求编号 |
 | 申请和答复写权，提交字段 | `claim`、`answer`、`submit` | `Claim`、`Answer`、`Submit` | `writers().request`、`ScriptGame::answer`、`submit` |
 
-持有人只能提交模板声明的可写字段。父对象离开本玩家的兴趣范围时，其挂接对象随之隐藏。重新进入后发送当前完整状态和父子身份。PlayerAttached 对象在持有者离房后销毁。MasterClient 对象由协调玩家写入，GameGlobal 还限制每种模板只存在一个全局实例。
+持有人只能提交模板声明的可写字段。父对象离开本玩家的兴趣范围时，其挂接对象随之隐藏。重新进入后发送当前完整状态和父子身份。PlayerAttached 对象在持有者离房后销毁。MasterClient 对象由协调玩家写入，GameGlobal 也由协调玩家写入。有作者键时以 `(scene, key)` 区分实例。无键实例只能位于默认场景，并独占该模板的 GameGlobal 实例名额。两种形式都禁止指定父对象。[生成约束](../../core/session/world.cpp)
 
 ### 注册需要预测的运动模型
 
@@ -80,7 +80,7 @@ Godot 玩法可以直接使用原生 `@rpc` 注解，并在 Replicator 上选择
 
 字段模板按稳定字段号排列，两端使用同一版本。新增的七类可以同时用于状态和 RPC 参数。配置中的 `vec4` 和 `color` 分别保存四个有限浮点分量，`object_ref` 保存一个本回合的 64 位引用。`bytes`、`vec2_array`、`int_map`、`int_list` 在每个字段末尾声明容量。整数表的键和值均为有符号 32 位，编码按键排序。有序列表保留重复值。协商 word 差量后，集合更新可只携带变更的长度和内容 word。字段格式携带当前完整集合，RPC 参数也按模板编码。[状态布局与差量](property-binding.md#状态布局和差量) · [控制台和两种刚体的模板](../../../examples/puzzle/components.cfg)
 
-对象生成时把挂载的组件与会话、对象号绑定一次。Unity 给 `NetcodeReplica.Fields` 配置目标成员和稳定字段号，Godot 给子节点 `replicated_object.gd` 按字段顺序配置相对属性路径，Cocos2d-x 给 `ReplicaComponent` 按相同顺序登记成员或访问器。绑定的目标需要与组件一起存活。空字段表可识别 Godot、Unity 原生二维或三维刚体及 Cocos2d-x 二维刚体。Cocos2d-x 的 Bullet 刚体通过 `use_body_3d` 显式绑定。刚体模板沿用位置、旋转、线速度、角速度、休眠、传送代数和玩法阶段七个字段；阈值与采样状态使用相同的网络世界单位，角度阈值使用度。
+对象生成时把挂载的组件与会话、对象号绑定一次。Unity 给 `NetcodeReplica.Fields` 配置目标成员和稳定字段号，Godot 兼容脚本 `replicated_object.gd` 按字段顺序配置相对属性路径；原生节点通过复制配置资源绑定属性，见 [Godot 原生场景接入](godot-scene-sync.md)，Cocos2d-x 给 `ReplicaComponent` 按相同顺序登记成员或访问器。绑定的目标需要与组件一起存活。空字段表可识别 Godot、Unity 原生二维或三维刚体及 Cocos2d-x 二维刚体。Cocos2d-x 的 Bullet 刚体通过 `use_body_3d` 显式绑定。刚体模板沿用位置、旋转、线速度、角速度、休眠、传送代数和玩法阶段七个字段；阈值与采样状态使用相同的网络世界单位，角度阈值使用度。
 
 Unity 对已出现的对象在 `Bind` 时检查字段号、数量和成员类型。首个快照前可以登记绑定，等对象可见时再检查，失败时记录一次错误并解除绑定。Cocos2d-x 在同一引擎步的组件遍历结束后泵送会话、采样和回调。回调中移除组件会结束它本次待执行的工作。
 

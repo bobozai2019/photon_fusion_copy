@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>物理同步与预测 · 车场联机手册</title>
+<style>
+:root{--paper:#f6f7f2;--panel:#fff;--ink:#172e29;--muted:#50655e;--line:#cbd5cd;--green:#106149;--mint:#e1f1e7;--amber:#925017;--sand:#fff0dc;--blue:#28588b;--ice:#e6eff9;--dark:#122e27;--mono:"IBM Plex Mono",Consolas,monospace;--sans:"Inter","Microsoft YaHei","PingFang SC",sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:18px}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.65 var(--sans);overflow-wrap:break-word}a{color:var(--green);text-underline-offset:3px}button,select{font:inherit;color:inherit}button{cursor:pointer}button:focus-visible,a:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid #2486b9;outline-offset:3px}button:disabled{cursor:default;opacity:.43}h1,h2,h3,p,figure{margin:0}h1,h2,h3{line-height:1.22}h1{font-size:clamp(36px,4.6vw,65px);letter-spacing:-.055em}h2{font-size:clamp(25px,2.8vw,38px);letter-spacing:-.045em}h3{font-size:19px}code,.mono,.kicker,.role,.count,output,.axis{font-family:var(--mono)}code{font-size:.9em}strong{font-weight:700}button,select{touch-action:manipulation}.wrap{width:min(1152px,calc(100% - 64px));margin-inline:auto}.mast{background:var(--panel);border-bottom:1px solid var(--line)}.mast .wrap,.brand,nav,.headrow,.act,.pager,.key,.actor,.pillset{display:flex;align-items:center}.mast .wrap,.headrow,.act,.pager{justify-content:space-between;gap:16px}.mast .wrap{min-height:59px}.brand{gap:10px;font-size:15px;font-weight:700;letter-spacing:.03em}.brand b{font:700 19px var(--mono);letter-spacing:-1px}.brand i{width:1px;height:15px;background:var(--line)}.mark{display:inline-flex;align-items:center;gap:3px;width:25px;height:23px}.mark i{width:5px;background:var(--green);border-radius:2px}.mark i:nth-child(1){height:9px}.mark i:nth-child(2){height:21px}.mark i:nth-child(3){height:14px}nav{gap:23px}nav a{color:var(--muted);font-size:14px;text-decoration:none}nav a:hover,footer a:hover{text-decoration:underline}
+.hero{background:var(--dark);color:#f4faf4;position:relative;overflow:hidden}.hero:after{content:"";position:absolute;inset:0;background-image:linear-gradient(#97c9ae0b 1px,transparent 1px),linear-gradient(90deg,#97c9ae0b 1px,transparent 1px);background-size:28px 28px;pointer-events:none}.hero .wrap{position:relative;z-index:1;display:grid;grid-template-columns:1.35fr 1fr;align-items:center;gap:48px;padding-block:40px}.kicker{font-size:12px;letter-spacing:.08em;color:var(--green);font-weight:700}.hero .kicker{color:#a8dec0;margin-bottom:10px}.hero p{color:#d0e3d7;margin-top:13px;max-width:580px}.clock{border-left:1px solid #486356;padding-left:30px;color:#e5f4ea}.clock figcaption{font-size:14px;margin-bottom:14px}.clockrow{display:grid;grid-template-columns:98px 1fr;align-items:center;gap:12px;margin:9px 0}.clockrow b{font:600 15px var(--mono)}.clockrow small{font:13px var(--sans);color:#ccded2;margin-left:6px}.rail{height:17px;display:flex;justify-content:space-between;align-items:center;position:relative}.rail:before{content:"";height:1px;position:absolute;inset-inline:0;background:#668573}.rail i{width:2px;height:13px;background:#ade4bf;position:relative}.rail.net i{height:9px;width:5px;background:#f4bd79;border-radius:2px}.clock .axis{margin-left:110px;display:flex;justify-content:space-between;color:#b9d3c3;font-size:11px}
+main{padding-bottom:40px}section{margin-top:45px}.sectiontag{color:var(--green);font:700 13px var(--mono);border-right:2px solid #87ae99;margin-right:12px;padding-right:12px;vertical-align:middle;letter-spacing:0}.intro{color:var(--muted);margin:9px 0 17px}.pillset{border:1px solid var(--line);border-radius:8px;padding:3px;background:#fff;gap:2px;flex-shrink:0}.pillset button,.btn,.stepbtn{background:transparent;border:0;border-radius:5px;padding:6px 13px;font-size:14px;font-weight:600}.pillset [aria-pressed=true]{background:var(--dark);color:white}.pillset button:hover:not([aria-pressed=true]),.stepbtn:hover:not([aria-current=step]){background:#edf1eb}.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}.flowgrid{display:grid;grid-template-columns:minmax(0,2.15fr) minmax(240px,1fr)}.sequence{padding:17px 18px 18px;background-color:#fdfefa;background-image:radial-gradient(#dce5db 1px,transparent 1px);background-size:14px 14px}.actors{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));text-align:center;gap:6px;position:relative;z-index:1}.actor{justify-self:center;gap:7px;font-size:14px;font-weight:700;background:#fff;border:1px solid var(--line);border-radius:7px;padding:5px 9px}.role{width:22px;height:22px;line-height:22px;text-align:center;border-radius:4px;font-weight:700;display:inline-block}.driver{background:var(--mint);color:var(--green)}.host{background:var(--sand);color:var(--amber)}.guest{background:var(--ice);color:var(--blue)}.rows{position:relative;padding-top:5px}.guides{position:absolute;inset:0 0 0;display:grid;grid-template-columns:repeat(3,1fr);pointer-events:none}.guides i{border-left:1px dashed #9aae9f;justify-self:center}.row{position:relative;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));align-items:center;min-height:42px}.node,.arrow{font-size:13px;text-align:center;font-weight:600;position:relative}.node{border:1px solid;border-radius:5px;justify-self:center;padding:2px 10px;max-width:100%}.localB{grid-column:1/3;color:var(--green);background:var(--mint);border-color:#a3c8b3}.localA{grid-column:3/5;color:var(--amber);background:var(--sand);border-color:#dbbd90}.localC{grid-column:5/7;color:var(--blue);background:var(--ice);border-color:#b0c5d9}.arrow{padding-bottom:5px;margin:0 2px;align-self:center;line-height:1.35;border-bottom:2px solid currentColor}.arrow:after{content:"";position:absolute;width:7px;height:7px;bottom:-5px;right:0;border-right:2px solid;border-top:2px solid;transform:rotate(45deg)}.toA,.toB{grid-column:2/4}.toA{color:var(--green)}.toB,.toC{color:var(--amber)}.toB:after{left:0;right:auto;transform:rotate(-135deg)}.toC{grid-column:4/6}.mobilefrom{display:none}.reader{padding:24px 25px;background:#f1f4ed;border-left:1px solid var(--line)}.reader h3{margin:6px 0 12px}.reader p{color:var(--muted);font-size:15px}.reader hr{border:0;border-top:1px solid var(--line);margin:17px 0}.reader .small,.small{font-size:13px;color:var(--muted)}.reader .small strong{color:var(--ink)}
+.labhead,.labfoot{padding:15px 21px}.labhead{background:#edf3ec;border-bottom:1px solid var(--line)}label{font-weight:600;font-size:14px}select{max-width:100%;background:white;border:1px solid #a8b8ad;border-radius:6px;padding:6px 8px;font-size:14px}.labmain{display:grid;grid-template-columns:1.45fr 1fr;align-items:center}.plot{padding:17px 21px}.plothead,.legend{display:flex;flex-wrap:wrap;gap:9px 18px;align-items:center}.plothead{justify-content:space-between;font-size:14px}.legend{font-size:12px;color:var(--muted);margin-top:8px}.key{gap:6px}.key i{width:16px;border-top:2px solid var(--green)}.key.orig i{border-top-style:dashed}.key.auth i{border-color:var(--amber)}.key.fixed i{border-color:var(--blue);border-top-style:dotted}.plot canvas{display:block;width:100%;height:215px}.stageinfo{padding:20px 22px;border-left:1px solid var(--line)}.stageinfo h3{margin:5px 0 8px}.stageinfo p{font-size:15px;color:var(--muted);min-height:4.8em}.stats{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:12px}.stats div{background:var(--paper);border-radius:6px;padding:8px 10px}.stats small{display:block;color:var(--muted);font-size:12px}output{font-weight:700;font-size:19px}.labfoot{border-top:1px solid var(--line)}.steps{display:flex;flex-wrap:wrap;gap:4px}.stepbtn{color:var(--muted);padding:5px 10px}.stepbtn[aria-current=step]{background:var(--mint);color:var(--green)}.btn{border:1px solid var(--line);background:white}.btn.primary{background:var(--dark);color:white;border-color:var(--dark)}.actions{display:flex;gap:8px}.readout{border-top:1px solid var(--line);padding:11px 21px}.readout summary{cursor:pointer;color:var(--green);font-size:14px;font-weight:600}.readout p,.readout table{margin:12px 0}.formula{background:var(--paper);padding:8px 12px;border-radius:5px;font:14px/1.65 var(--mono)}table{border-collapse:collapse;width:100%;text-align:left;font-size:14px}th,td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-weight:600;background:#f1f4ef}tbody tr:last-child td{border-bottom:0}.readout td{font-family:var(--mono)}
+.decision{padding:18px 20px}.decisiontop{text-align:center;margin-bottom:12px}.decisiontop b{display:inline-block;background:var(--dark);color:white;border-radius:6px;padding:6px 15px}.decisiontop span{display:block;color:var(--muted);font-size:13px;margin-top:5px}.branches{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.branch{border-radius:7px;border:1px solid var(--line);padding:12px 14px;background:#fcfdfb}.branch strong{display:block;margin-bottom:5px}.branch p,.notes p,.platform p{font-size:14px;color:var(--muted)}.path{font:700 12px/1.5 var(--mono);color:var(--green);margin-bottom:5px;display:block}.notes,.platform{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-top:16px}.notes article,.platform article{padding:13px 0;border-top:2px solid #96b5a1}.notes h3,.platform h3{margin-bottom:6px;font-size:17px}.project{background:#e9efe6;padding:22px;border:1px solid var(--line);border-radius:9px}.project p{margin-top:9px;color:var(--muted)}footer{border-top:1px solid var(--line);padding:22px 0 32px}footer .wrap{display:flex;gap:10px 22px;flex-wrap:wrap;font-size:14px}footer strong{color:var(--muted)}.noscript{margin:10px auto;color:#802e16}
+@media(max-width:900px){.wrap{width:calc(100% - 40px)}.hero .wrap{gap:24px}.headrow{align-items:flex-start}.flowgrid{grid-template-columns:minmax(0,1fr)}.reader{border-left:0;border-top:1px solid var(--line);padding:15px 20px}.reader hr{margin:10px 0}.reader h3{margin:4px 0}.labmain{grid-template-columns:1.2fr 1fr}.stats{gap:5px}.stageinfo{padding:14px}.pager{flex-wrap:wrap}}
+@media(max-width:620px){html{scroll-behavior:auto}.wrap{width:calc(100% - 28px)}.mast .wrap{flex-wrap:wrap;gap:5px;padding:9px 0}nav{gap:12px}nav a{font-size:12px}.brand{font-size:13px;gap:7px}.brand b{font-size:16px}.hero .wrap{grid-template-columns:1fr;gap:20px;padding-block:25px}.hero p,.intro{font-size:14px}.clock{border-left:0;border-top:1px solid #486356;padding:12px 0 0}.clock figcaption{margin-bottom:6px}.clockrow{margin:4px 0}.headrow,.act{flex-wrap:wrap}.headrow{gap:10px}.sectiontag{font-size:12px}section{margin-top:30px}.pillset button{font-size:13px}.sequence{padding:12px}.actor{font-size:13px;padding:3px 5px;gap:4px}.role{width:18px;height:18px;line-height:18px}.rows{padding-left:10px;margin:10px 0 0 7px;border-left:1px solid var(--line)}.guides{display:none}.row{display:flex;gap:8px;align-items:center;min-height:36px}.row:before{content:"";width:7px;border-top:1px solid var(--line);position:absolute;left:-10px}.mobilefrom{display:inline-block;flex:0 0 52px;font:700 13px var(--mono);color:var(--muted)}.row .arrow,.row .node{text-align:left;font-size:13px;padding:2px 8px;line-height:1.45}.row .arrow{border:0}.row .arrow:after{display:none}.node{justify-self:start}.labmain,.notes,.platform,.branches{grid-template-columns:1fr}.plot{padding:12px}.stageinfo{border-left:0;border-top:1px solid var(--line);padding:14px}.stageinfo p{min-height:0}.labhead,.labfoot,.readout{padding:12px}.pager{gap:9px}.steps{gap:0}.stepbtn{font-size:13px;padding:5px 7px}.row .arrow{background:#f1f4ed;border-radius:4px}.notes,.platform{gap:3px}.decision{padding:14px}.branches{gap:7px}.decisiontop{margin-bottom:8px}.project{padding:15px}.readout th,.readout td{font-size:12px;padding:6px 3px}}
+.key.auth i{width:9px;height:9px;border:2px solid var(--amber)}.extra{margin-top:12px;border:1px solid var(--line);border-radius:7px;background:var(--panel)}.branches{position:relative;padding-top:11px}.branches:before{content:"";position:absolute;top:0;left:calc((100% - 24px)/6);right:calc((100% - 24px)/6);border-top:1px solid #94a99c}.branch{position:relative}.branch:before{content:"";position:absolute;top:-12px;left:50%;height:11px;border-left:1px solid #94a99c}
+@media(max-width:620px){.branches{padding-top:0}.branches:before,.branch:before{display:none}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<header class="mast"><div class="wrap">
+  <div class="brand"><span class="mark" aria-hidden="true"><i></i><i></i><i></i></span><b>Netcode</b><i></i>车场联机手册</div>
+  <nav aria-label="章节"><a href="#flow">权威流程</a><a href="#lab">回滚实验</a><a href="#platform">三端适配</a></nav>
+</div></header>
+<div class="hero"><div class="wrap">
+  <div><div class="kicker">固定步模拟 / 车辆控制</div><h1>物理同步与预测</h1><p>驾驶者按下油门，旁观者稍后看到车辆起步。沿着同一条输入，追踪三台机器各自计算和显示的状态。</p></div>
+  <figure class="clock"><figcaption>车场里的两种节奏</figcaption>
+    <div class="clockrow"><div><b>30 Hz</b><small>模拟</small></div><div class="rail" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+    <div class="clockrow"><div><b>20 Hz</b><small>发包</small></div><div class="rail net" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div></div>
+    <div class="axis"><span>0 ms</span><span>200 ms</span></div>
+  </figure>
+</div></div>
+<main class="wrap">
+<noscript><p class="noscript">请启用 JavaScript 以切换流程图和运行数值实验。下方的纠偏分支与平台说明可直接阅读。</p></noscript>
+<section id="flow" aria-labelledby="flowtitle">
+  <div class="headrow"><h2 id="flowtitle"><span class="sectiontag">01</span>谁决定车的位置？</h2>
+    <div class="pillset" role="group" aria-label="对象的状态权威"><button type="button" data-mode="host" aria-pressed="true">房主权威</button><button type="button" data-mode="client" aria-pressed="false">客机权威</button></div>
+  </div>
+  <p class="intro">从上往下读。每个方框是一次本地操作，带方向的连线表示跨机器传递的消息。框图展示房主预测与委托客机写权两条路径，具体检查点和交接条件见页尾的执行规格。</p>
+  <div class="panel flowgrid">
+    <figure class="sequence" aria-label="一辆车在驾驶端、房主和旁观端之间的时序图">
+      <div class="actors"><div class="actor"><b class="role driver">B</b>驾驶客机</div><div class="actor"><b class="role host">A</b>房主</div><div class="actor"><b class="role guest">C</b>旁观客机</div></div>
+      <div class="rows" id="rows"></div>
+    </figure>
+    <aside class="reader" aria-live="polite"><div class="kicker">读图</div><h3 id="modeTitle"></h3><p id="modeDesc"></p><hr><p class="small"><strong id="modeKey"></strong> <span id="modeNote"></span></p></aside>
+  </div>
+  <details class="readout extra"><summary>为什么要保存步号、已结算输入和有符号车速？</summary>
+    <p><strong>步号回答“哪一刻”。</strong> 客端用房主的时间样本估计模拟步，把输入标记给预计能抵达的目标步。每步锁存一次输入，发包时可捎带最近几步。同一目标步只结算一次，已过截止的输入按缺失规则处理。</p>
+    <p><strong>确认回答“算到了哪里”。</strong> 对象版本确认表示对端收到了某次属性变化。预测还需要房主报告该驾驶者已结算到哪个输入步，即使车顶着墙没动，也要推进这项确认。</p>
+    <p><strong>速度回答“下一步会怎样”。</strong> 同一位置上，一辆车已停住，另一辆还在滑行。只恢复位置，两车下一步就再次分开。历史应包含真正送入模拟的输入、步末状态和当时的碰撞环境。</p>
+  </details>
+</section>
+<section id="lab" aria-labelledby="labtitle">
+  <h2 id="labtitle"><span class="sectiontag">02</span>重演一次迟到的油门</h2>
+  <p class="intro">房主权威实验。B 从第 101 步开始持续踩满油门，A 的第 102 步检查点在 B 已经走到 103 时抵达。切换首步输入的到达情况，观察是否需要重演。</p>
+  <div class="panel">
+    <div class="labhead act"><label for="scenario">第 101 步输入在房主端的情况</label><select id="scenario"><option value="late">迟到，沿用此前的零油门</option><option value="ontime">按时，使用满油门</option></select></div>
+    <div class="labmain"><figure class="plot"><div class="plothead"><strong>车辆位置 x（车场单位）</strong><span class="small">横轴为模拟步 tick</span></div><canvas id="chart" role="img" aria-label="车辆位置随模拟步变化，精确值见下方逐步数据"></canvas>
+      <figcaption class="legend"><span class="key orig"><i></i>B 原始预测</span><span class="key auth"><i></i>B 已收到的 A 检查点</span><span class="key fixed"><i></i>B 重演轨迹</span></figcaption></figure>
+      <div class="stageinfo" aria-live="polite"><div class="count kicker" id="phase"></div><h3 id="stageTitle"></h3><p id="stageDesc"></p><div class="stats"><div><small id="valLabel1"></small><output id="val1"></output></div><div><small id="valLabel2"></small><output id="val2"></output></div></div></div>
+    </div>
+    <div class="labfoot pager"><div class="steps" role="group" aria-label="跳转到实验步骤"><button class="stepbtn">基线</button><button class="stepbtn">预测</button><button class="stepbtn">对账</button><button class="stepbtn" id="lastStep">重演</button></div><div class="actions"><button type="button" class="btn" id="prev">上一步</button><button type="button" class="btn primary" id="next">下一步</button></div></div>
+    <details class="readout" id="formula"><summary>查看计算公式与完整逐步数据</summary><p>空地直行，朝向为零，初始 x = 200、v = 0。每步先更新有符号车速 v（车场单位/秒），再积分位置。表中保留三位小数，下一步使用浮点运算结果。</p>
+      <div class="formula">v ← v + (155 × 油门 − v) × 0.09<br>x ← x + v / 30</div>
+      <table><thead><tr><th scope="col">步末</th><th scope="col">B 原预测 x / v</th><th scope="col">A 参考 x / v</th></tr></thead><tbody id="values"></tbody></table><p class="small">A 的 103 是按相同后续输入算出的参考值。B 在本例实际收到的权威检查点截至 102。</p>
+    </details>
+  </div>
+</section>
+<section aria-labelledby="decisiontitle">
+  <h2 id="decisiontitle"><span class="sectiontag">03</span>收到检查点后怎么走？</h2>
+  <p class="intro">先校验对象、局次和授权代次。对有效且较新的检查点，找出客端同一个 T 的步末状态和碰撞环境。</p>
+  <div class="panel decision">
+    <div class="decisiontop"><b>用权威步末 T 对账</b><span>↓ 根据历史是否齐全、误差是否超限选择路径 ↓</span></div>
+    <div class="branches">
+      <article class="branch"><span class="path">↳ 历史齐全 · 一致</span><strong>确认到 T</strong><p>位置、速度和控制器状态在容差内，离散状态吻合。推进输入确认并保留 T 之后的预测。</p></article>
+      <article class="branch"><span class="path">↳ 历史齐全 · 超差</span><strong>恢复 T，从 T+1 重演</strong><p>恢复步末的位姿和速度，用原输入、当时的环境算到预测头。覆盖旧历史，这轮重演跳过已包含在检查点内的 T。</p></article>
+      <article class="branch"><span class="path">↳ 必需历史缺失</span><strong>取得完整基线</strong><p>先呈现权威结果。拿到当前车辆与碰撞世界后，从基线之后恢复预测。跨局、旧授权的迟包直接丢弃。</p></article>
+    </div>
+  </div>
+  <div class="notes">
+    <article><h3>碰撞体与显示模型</h3><p>重演结束就提交新的碰撞位置。显示模型可暂留上一可见位置和新结果之间的偏移，再逐帧衰减；传送时清除偏移。重演中的碰撞音、RPC 和计分要抑制或去重。</p></article>
+    <article><h3>远车插值与有限外推</h3><p>C 略晚播放权威轨迹。在第 100 步 x=10 与第 103 步 x=13 之间，播放到 101.5 时线性插值得 11.5。缓冲耗尽可短时按速度外推，接触、传送或超时后停止。</p></article>
+    <article><h3>重建当时的碰撞环境</h3><p>若门在 105 步开启，重演 103 步仍应关着门。两辆车互相施力时，要用同一个 T 恢复相关刚体，或让房主统一裁决。延迟播放的远车只适合显示。</p></article>
+  </div>
+</section>
+<section id="platform" aria-labelledby="platformtitle">
+  <h2 id="platformtitle"><span class="sectiontag">04</span>落到三个引擎</h2>
+  <p class="intro">核心统一步号、输入、历史与确认。各平台在自己的物理安全点绑定刚体、采集或恢复状态，在渲染阶段写显示模型。</p>
+  <div class="project"><h3>车场已实现的行为</h3><p>每款引擎分别在自己的房间运行车场。房主按 30 Hz 结算车辆，客人的本车按输入预测，收到权威检查点后重演未确认输入，远车按约 100 ms 延迟插值。车场也已验证按对象交接写权。上方实验数值来自车辆运动公式的教学推演。</p></div>
+  <div class="platform">
+    <article><h3>Unity</h3><p>共用模型预测自车，C# 主线程处理绑定和呈现。原生路径可用独立 PhysicsScene 或 PhysicsScene2D 手动固定步进，确保同一世界只有一个驱动者。</p></article>
+    <article><h3>Godot</h3><p>共用模型可以逐步回放。原生刚体在物理安全点采集与纠偏；项目采用的 godot-cpp 4.5 公共绑定未提供等价的独立世界单步入口。</p></article>
+    <article><h3>Cocos2d-x</h3><p>当前构建关闭原生 2D 和 3D 物理，先复用 C++ 车场模型。原生扩展分别接入 Chipmunk 或 Bullet，并分别验证场景和后端的步数。</p></article>
+  </div>
+  <details class="readout extra"><summary>这些机制怎样对应 UE 与 Fusion？</summary><p>UE 的 Resimulation 会把权威物理帧与本地同帧历史比较，超差时恢复并补演。Fusion 2.1 的 Physics Addon 可在正向与重演 tick 驱动场景；Godot Shared 的刚体 Forecast 用最近的速度估计远端运动。上面的自车实验对应前两者的回放原理，旁观者的有限外推对应后者的用途。原版适用的拓扑和资料见<a href="decisions/physics-prediction.md">设计依据</a>。</p></details>
+</section>
+</main>
+<footer><div class="wrap"><strong>项目依据</strong><a href="../../examples/yard/shared/match.cpp">车辆运动源码</a><a href="../task/cross-engine-sync/验收/M2.md">采样与发送实测</a><a href="decisions/physics-prediction.md">三端设计</a><a href="specs/physics-prediction.md">协议与验收</a></div></footer>
+<script>
+"use strict";
+const byId = id => document.getElementById(id);
+const flows = {
+  host: {
+    title: "向房主提交输入",
+    desc: "B 在本地锁存油门，立即推进本车并保留历史。A 按目标步消费输入，计算全场认可的车辆状态。B 收到检查点后，对比同一步的历史。",
+    key: "一次检查点，两种用途。",
+    note: "B 用它校正自车；C 用样本插值播放远车。图中两条下行可随同一发送批次发出。",
+    rows: [
+      ["localB","锁存输入，预测自车"],
+      ["toA","带目标步的输入"],
+      ["localA","消费输入，完成物理步"],
+      ["toB","权威检查点 T"],
+      ["toC","权威运动样本"],
+      ["localB","对账，有偏差则重演"],
+      ["localC","缓冲后插值显示"]
+    ]
+  },
+  client: {
+    title: "向房主提交本车状态",
+    desc: "A 给 B 授予这辆车的物理写权。B 用自己的固定步结果驱动车体，A 校验来源、代次和运动范围，接纳后转发给 C。",
+    key: "交权从完整基线开始。",
+    note: "正常回显只确认进度。断线后由房主接管；恢复身份并获新代次后，B 才继续发布。旧代次的状态会被丢弃。",
+    rows: [
+      ["toB","写权代次与交接基线"],
+      ["localB","模拟并采集本车状态"],
+      ["toA","步号、代次、位姿与速度"],
+      ["localA","校验并接纳样本"],
+      ["toB","确认已接纳的来源步"],
+      ["toC","转发本车状态"],
+      ["localC","缓冲后插值显示"]
+    ]
+  }
+};
+const laneNames = {
+  localB:["B","驾驶客机本地操作"], localA:["A","房主本地操作"], localC:["C","旁观客机本地操作"],
+  toA:["B → A","驾驶客机发给房主"], toB:["A → B","房主发给驾驶客机"], toC:["A → C","房主发给旁观客机"]
+};
+function showMode(mode) {
+  const flow = flows[mode];
+  const guides = document.createElement("div");
+  guides.className = "guides";
+  guides.setAttribute("aria-hidden","true");
+  guides.innerHTML = "<i></i><i></i><i></i>";
+  const rows = flow.rows.map(([lane, label]) => {
+    const row = document.createElement("div");
+    row.className = "row";
+    const from = document.createElement("span");
+    from.className = "mobilefrom";
+    from.textContent = laneNames[lane][0];
+    from.setAttribute("aria-hidden","true");
+    const item = document.createElement("span");
+    item.className = (lane.startsWith("local") ? "node " : "arrow ") + lane;
+    item.textContent = label;
+    item.setAttribute("role","img");
+    item.setAttribute("aria-label",laneNames[lane][1] + "，" + label);
+    row.append(from,item);
+    return row;
+  });
+  byId("rows").replaceChildren(guides,...rows);
+  byId("modeTitle").textContent = flow.title;
+  byId("modeDesc").textContent = flow.desc;
+  byId("modeKey").textContent = flow.key;
+  byId("modeNote").textContent = flow.note;
+  document.querySelectorAll("[data-mode]").forEach(button => {
+    button.setAttribute("aria-pressed",String(button.dataset.mode === mode));
+  });
+}
+document.querySelectorAll("[data-mode]").forEach(button => {
+  button.addEventListener("click",() => showMode(button.dataset.mode));
+});
+showMode("host");
+
+// Match::simulate, specialized to a clear straight, zero steering and a positive throttle.
+// Round intermediate results to float32 as in the C++ vehicle model.
+const f32 = Math.fround;
+const dt = f32(1/30);
+function step(state, throttle) {
+  const v = f32(state.v + f32(f32(f32(throttle*155) - state.v) * f32(.09)));
+  return {tick:state.tick+1, x:f32(state.x + f32(v * dt)), v};
+}
+function trajectory(inputs) {
+  const states = [{tick:100,x:200,v:0}];
+  for (const throttle of inputs) states.push(step(states[states.length-1],throttle));
+  return states;
+}
+const predicted = trajectory([1,1,1]);
+const buttons = Array.from(document.querySelectorAll(".stepbtn"));
+let stage = 0;
+let authority, corrected, needsReplay;
+function computeExample() {
+  const late = byId("scenario").value === "late";
+  authority = trajectory([late ? 0 : 1,1,1]);
+  const checkpoint = authority[2];
+  needsReplay = Math.abs(checkpoint.x-predicted[2].x) > .001 ||
+                Math.abs(checkpoint.v-predicted[2].v) > .001;
+  // T=102 is already finished. Reuse only the saved full-throttle input for 103.
+  corrected = needsReplay ? step(checkpoint,1) : predicted[3];
+  byId("values").replaceChildren(...predicted.map((state,i) => {
+    const row = document.createElement("tr");
+    const pair = s => s.x.toFixed(3) + " / " + s.v.toFixed(3);
+    for (const value of [state.tick,pair(state),pair(authority[i])]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    }
+    return row;
+  }));
+  renderStage();
+}
+function stageText() {
+  const checkpoint = authority[2];
+  const positionError = Math.abs(checkpoint.x-predicted[2].x);
+  const speedError = Math.abs(checkpoint.v-predicted[2].v);
+  switch(stage) {
+    case 0: return ["从同一个步末出发","第 100 步结束时，A 和 B 都记录了相同的位置和速度。每一步持续 1/30 秒；下一步使用自己的输入和当时的碰撞环境。","第 100 步 · x",200,"第 100 步 · v",0];
+    case 1: return ["B 已预测到第 103 步","B 连续三个固定步踩满油门。每算完一步就保存输入和步末状态，先把自车显示出来。此时 B 已知的权威样本仍停在 100。","原预测 103 · x",predicted[3].x,"原预测 103 · v",predicted[3].v];
+    case 2: return ["拿第 102 步与第 102 步比较",needsReplay
+      ? "A 在 101 截止时沿用了零油门，从 102 才用满油门。B 收到 A 的 102 检查点后，查出自己保存的 102，位置和速度都有偏差。"
+      : "A 在 101 就用上了满油门。B 收到 102 检查点，发现其位置和速度与本地 102 历史完全相同。当前预测头仍在 103。",
+      "同一步 · 位置差",positionError,"同一步 · 速度差",speedError];
+    default: return [needsReplay ? "装回 102，只补演 103" : "确认 102，保留原预测",
+      needsReplay
+      ? "恢复 A 的 102 步末位置和速度，再执行一次保存的 103 油门。碰撞体采用新结果。原可见位置与新位置的差约 " + Math.abs(predicted[3].x-corrected.x).toFixed(3) + "，可作为逐帧衰减的显示偏移。"
+      : "确认结算进度至 102，这次重演 0 步。B 继续使用最初算出的 103 状态，无需修正画面。",
+      "最终 103 · x",corrected.x,"最终 103 · v",corrected.v];
+  }
+}
+function drawChart() {
+  const canvas = byId("chart");
+  const width = canvas.clientWidth, height = canvas.clientHeight;
+  if (!width || !height) return;
+  const scale = window.devicePixelRatio || 1;
+  canvas.width = Math.round(width*scale);
+  canvas.height = Math.round(height*scale);
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(scale,0,0,scale,0,0);
+  const left=39, right=18, top=14, bottom=30;
+  const X = tick => left+(width-left-right)*(tick-100)/3;
+  const Y = pos => height-bottom-(height-top-bottom)*(pos-200)/3;
+  ctx.font='12px Consolas, monospace';
+  ctx.fillStyle="#52665e"; ctx.strokeStyle="#dce3dc"; ctx.lineWidth=1;
+  for (let y=200;y<=203;y++) {
+    ctx.textAlign="right"; ctx.fillText(y,left-8,Y(y)+4);
+    ctx.beginPath(); ctx.moveTo(left,Y(y)); ctx.lineTo(width-right,Y(y)); ctx.stroke();
+  }
+  for (let t=100;t<=103;t++) {
+    ctx.textAlign="center"; ctx.fillText(t,X(t),height-8);
+    ctx.beginPath(); ctx.moveTo(X(t),top); ctx.lineTo(X(t),height-bottom); ctx.stroke();
+  }
+  function line(states,color,dash,shape) {
+    ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=2.4;
+    if (shape!=="square") {
+      ctx.setLineDash(dash); ctx.beginPath();
+      states.forEach((s,i) => i ? ctx.lineTo(X(s.tick),Y(s.x)) : ctx.moveTo(X(s.tick),Y(s.x)));
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    for (const s of states) {
+      const x=X(s.tick),y=Y(s.x);
+      if (shape==="square") { ctx.strokeRect(x-4.5,y-4.5,9,9); }
+      else if (shape==="diamond") {
+        ctx.beginPath(); ctx.moveTo(x,y-5); ctx.lineTo(x+5,y); ctx.lineTo(x,y+5); ctx.lineTo(x-5,y); ctx.closePath(); ctx.fill();
+      } else { ctx.beginPath(); ctx.arc(x,y,2.9,0,2*Math.PI); ctx.fill(); }
+    }
+  }
+  line(stage===0 ? predicted.slice(0,1) : predicted,"#106149",[7,5],"circle");
+  if (stage===3 && needsReplay) line([authority[2],corrected],"#28588b",[2,4],"diamond");
+  line(stage<2 ? [authority[0]] : [authority[0],authority[2]],"#925017",[],"square");
+}
+function renderStage() {
+  const [title,desc,label1,val1,label2,val2] = stageText();
+  byId("phase").textContent = "步骤 " + (stage+1) + " / 4";
+  byId("stageTitle").textContent=title;
+  byId("stageDesc").textContent=desc;
+  byId("valLabel1").textContent=label1;
+  byId("valLabel2").textContent=label2;
+  byId("val1").value=val1.toFixed(3);
+  byId("val2").value=val2.toFixed(3);
+  byId("lastStep").textContent=needsReplay ? "重演" : "确认";
+  buttons.forEach((button,i) => {
+    if (i===stage) button.setAttribute("aria-current","step");
+    else button.removeAttribute("aria-current");
+  });
+  byId("prev").disabled=stage===0;
+  byId("next").disabled=stage===buttons.length-1;
+  drawChart();
+}
+buttons.forEach((button,i) => button.addEventListener("click",() => {stage=i; renderStage();}));
+byId("next").addEventListener("click",() => {if(stage<buttons.length-1) stage++; renderStage();});
+byId("prev").addEventListener("click",() => {if(stage>0) stage--; renderStage();});
+byId("scenario").addEventListener("change",computeExample);
+computeExample();
+new ResizeObserver(drawChart).observe(byId("chart"));
+</script>
+</body>
+</html>

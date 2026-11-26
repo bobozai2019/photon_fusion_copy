@@ -24,7 +24,7 @@ Godot 的场景组件可从节点属性直接生成下述字段模板。[Godot �
 
 | 需要区分的类型 | Godot | Unity | Cocos2d-x |
 |---|---|---|---|
-| 房内对象引用 | 用 `int` 保存句柄；导出模板时将该字段号加入 `reference_fields` | `ulong` | `netcode::ObjectReference` |
+| 房内对象引用 | 兼容脚本导出器用 `int` 保存句柄并以 `reference_fields` 标记字段号；原生节点的对象引用绑定见[场景接入](godot-scene-sync.md) | `ulong` | `netcode::ObjectReference` |
 | 整数数组、有序整数列表 | `PackedInt32Array`、`Array[int]` | `int[]`、`LinkedList<int>` | `IntArray`、`IntLinkedList` |
 | 整数表 | `Dictionary[int,int]` | `Dictionary<int,int>` | `IntMap` |
 | 二进制、二维向量数组 | `PackedByteArray`、`PackedVector2Array` | `byte[]`、`Vector2[]` | `Bytes`、`Vector2Array` |
@@ -77,10 +77,10 @@ flowchart LR
 
 上述步骤覆盖房主计算之后的属性复制。完整联机验收另需覆盖输入上行：客人 B 发油门输入，房主 A 的游戏逻辑计算车辆状态，再由复制层向 B 提交最终属性。测试应分别记录输入抵达、房主写值以及客人应用三个观察点。[房间与游戏通道决定](../decisions/game-transport.md)
 
-首轮允许手动推进，并分别记录对象、字段、阶段和本地序号。Godot 绑定可以使用 `.:net_input_x`，Cocos 可以使用显式 getter/setter；两端共同约定稳定的字段身份、类型和单位。[适配器边界决定](../decisions/engine-boundary.md)
+首轮允许手动推进，并分别记录对象、字段、阶段和本地序号。Godot 房间可用 `.:net_input_x` 绑定两端属性，Cocos 房间可用显式 getter/setter。同一房间的两端约定稳定的字段身份、类型和单位。[适配器边界决定](../decisions/engine-boundary.md)
 
 **首版接入验收**：用可配置的 Replicator 启用常见变换预设，并显式选择根节点和子节点上的自定义属性。开局前 A、B 均已入房；在预置网络节点上分别改动两个字段，核对 B 读回的值。再由 A 生成一个已注册模板的实例，验证 B 建立对应实例并应用属性，A 销毁后 B 移除该实例。开局后新玩家的加入请求按房间规则拒绝。
 
-**变换与显示**：覆盖 2D 和 3D 的位置、旋转和缩放。房主游戏逻辑推进物理与权威状态。测试分别记录收到的快照值和插值后的显示位置，并验证连续两个快照之间的可见移动。普通浮点字段采用表中直接应用场景。旋转与缩放的编码精度、表现平滑策略待定。首版本地预测留待后续。
+**变换与显示**：覆盖 2D 和 3D 的位置、旋转和缩放。房主游戏逻辑推进物理与权威状态。测试分别记录收到的快照值和插值后的显示位置，并验证连续两个快照之间的可见移动。普通浮点字段采用表中直接应用场景。旋转、缩放精度与平滑策略按玩法验收。车场后来实现了本车固定步预测和远车快照插值。[已实现的房主预测](physics-prediction.md#已实现的房主预测)
 
 原版 Preview 555 的 Shared 双端实验中，权威端在同一脚本回调依次写入 `0.125、0.375、0.875`，代理 setter 只执行一次，收到约 `0.88`。60 与 30 Hz 的稳定物理驱动下，权威端 60 个物理步均读字段 60 次，关闭该字段后为零。自研首轮用显式时钟验收采集、投递、应用三个阶段，自研 f32 按自身编码精度核对。[原版条件与数值](../../research/fusion/findings/client-audit.md)

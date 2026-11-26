@@ -1,0 +1,56 @@
+{
+  "godot": {
+    "host": {
+      "score": 42,
+      "fields": 8,
+      "body": 1,
+      "reference": 1,
+      "typed": 1,
+      "body3d": 1
+    },
+    "guest": {
+      "score": 42,
+      "fields": 8,
+      "body": 1,
+      "reference": 1,
+      "typed": 1,
+      "body3d": 1
+    }
+  },
+  "unity": {
+    "host": {
+      "score": 42,
+      "fields": 8,
+      "body": 1,
+      "reference": 1,
+      "typed": 1,
+      "body3d": 1
+    },
+    "guest": {
+      "score": 42,
+      "fields": 8,
+      "body": 1,
+      "reference": 1,
+      "typed": 1,
+      "body3d": 1
+    }
+  },
+  "cocos": {
+    "host": {
+      "score": 42,
+      "fields": 8,
+      "body": 1,
+      "reference": 1,
+      "typed": 1,
+      "body3d": 1
+    },
+    "guest": {
+      "score": 42,
+      "fields": 8,
+      "body": 1,
+      "reference": 1,
+      "typed": 1,
+      "body3d": 1
+    }
+  }
+}

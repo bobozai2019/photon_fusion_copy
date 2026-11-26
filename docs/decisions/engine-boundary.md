@@ -1,14 +1,16 @@
-# 初始设计决定 · 状态布局与引擎绑定
+# 引擎边界、状态布局与本地绑定
 
-**范围**：首轮 `property-binding`。这份决定定义本项目的分层。参考构建的原生布局保存在[研究记录](../../research/fusion/findings/property-binding.md)。
+Godot、Unity 和 Cocos2d-x 各有一个平台 SDK。房间只支持同一种引擎的玩家，游戏两端按兼容的模板、字段及 RPC 定义解释消息。复用范围是 SDK 的 C++ 核心，每个引擎自行实现对象绑定和生命周期。[同引擎客户端同步](../specs/game-session.md#同引擎客户端同步)
 
-第五轮确定两层代码边界：`core/` 包含状态、会话和传输；`engineplatform/` 首先实现 `cocos2dx/`。Cocos 的房主和客人读取声明式配置，将字段绑定到本地读写器。核心的公开类型可在无 Cocos 头文件时使用，Windows 套接字细节留在传输实现中。
+`core/` 提供状态、会话和传输接口，`network/` 提供 TCP、Direct 等传输实现，`engineplatform/` 负责本地对象的访问。最初的 `property-binding` 实验从 Cocos2d-x 声明式绑定起步。Fusion 参考构建的布局另见[原版研究记录](../../research/fusion/findings/property-binding.md)。
 
 | 组件 | 拥有的数据或行为 |
 | --- | --- |
 | Core | 对象身份、字段身份和类型、编码后的状态、变化和确认记录。提供可显式推进的采集与提交边界，便于离线验证 |
 | 引擎适配器 | 绑定到可读写的本地对象，管理绑定的有效性，选择引擎回调并向 Core 提供值或把收到的值写回 |
 | Session | 谁可以提交哪个对象、推进 tick、对象生成销毁、向谁发送状态和事件 |
-| Transport | 收发数据报，提供可注入丢包、延迟和乱序的本地验证链路 |
+| Transport | 按连接与通道收发消息，向会话报告事件与流量。本地测试链路可注入丢包、延迟和乱序 |
 
-Godot、Unity 和 Cocos2d-x 分别提供平台 SDK。单局同步范围为使用同一引擎、加载同一模板的一组进程。各平台把本地属性转成 Core 的模板字段值，Core 负责定长 word 布局、发送阶段的 `Shadow` 扫描与差量。平台可分别迭代属性访问、回调和场景生命周期。[属性同步规格](../specs/property-binding.md)
+Session 支持房主按对象委托客户端写权。Core 的类型和线协议仅引用对象、模板、玩家、代次和状态进度。游戏模型声明字段、验证与恢复规则，具体引擎负责读写实例。离散拼图和连续运动模型共享此接口，只有启用预测的模型需要实现单步重演。[通用对象同步契约](../specs/object-authority.md)
+
+各平台把本地属性转成 Core 的模板字段值，Core 负责定长 word 布局、发送阶段的 `Shadow` 扫描与差量。平台可分别迭代属性访问、回调和场景生命周期。[属性同步规格](../specs/property-binding.md)

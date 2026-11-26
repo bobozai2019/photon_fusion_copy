@@ -9,13 +9,15 @@ import uuid
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "tools"))
 from artifacts import ROOT, budget, create_job, job_lock, remove_owned
+
+sys.path.insert(0, str(REPO.parent / "examples" / "tools"))
 from verify_yard import Process
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--godot", required=True, type=Path)
-    parser.add_argument("--racing", type=Path, default=REPO.parent / "photon-fusion-godot-starter-kit-racing_3.0.0")
+    parser.add_argument("--racing", type=Path, default=REPO.parent / "references/photon/photon-fusion-godot-starter-kit-racing_3.0.0")
     args = parser.parse_args()
     if not budget(ROOT, 32 * 1024 ** 2)["allowed"]:
         return 1

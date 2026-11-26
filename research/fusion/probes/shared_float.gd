@@ -48,7 +48,10 @@ func boot() -> void:
         quit(4)
     )
     process_frame.connect(sample)
-    Fusion.connect_to_photon("netcode-" + room_name + "-" + role)
+    var app_id := OS.get_environment("FUSION_PROBE_APP_ID").strip_edges()
+    if not app_id.is_empty():
+        Fusion.set_app_id(app_id)
+    Fusion.connect_to_photon("netcode-" + room_name + "-" + role, OS.get_environment("FUSION_PROBE_REGION"))
 
 func freeze_vehicle(vehicle: Node) -> void:
     vehicle.set_physics_process(false)

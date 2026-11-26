@@ -1,5 +1,9 @@
 # Fusion 研究资料
 
+## 本地原版拆解进度
+
+Preview 555 的 47 个随包脚本、295 个 Godot 注册方法以及 Linux 编辑器库两个命名空间的 360 个具名函数起点均有逐项索引。原版 Web 双端已验证属性采集、节点重绑、RPC、兴趣、权威交接、输入重演、刚体 Forecast、地图增卸与 Master 更替。Windows 原版另测编辑器导出与类型布局。架构差距、平台、构建及实验边界见[客户端拆解与项目差距](findings/client-audit.md) · [脚本逐文件清单](findings/sample-scripts.md) · [原生关键分支](findings/native-runtime.md) · [探针命令](probes/README.md)。
+
 ## 官方文档入口
 
 - 研究 Godot 端的对象权威、Replicator 配置、属性同步和 RPC 时，从 Shared Authority 版手册进入相应章节。[Fusion Godot 3 · Shared Authority](https://doc.photonengine.com/fusion-godot/v3-shared-authority/fusion-intro)

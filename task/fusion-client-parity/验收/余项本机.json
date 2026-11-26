@@ -1,0 +1,443 @@
+{
+  "date": "2026-11-21",
+  "platform": "Windows x64, 127.0.0.1, local player hosts",
+  "core_tests": {
+    "Debug": 11,
+    "Release": 11
+  },
+  "migration": {
+    "script": [
+      {
+        "coordinators": [
+          "unity",
+          "godot",
+          "unity"
+        ],
+        "checkpoint_tick": 7,
+        "values": [
+          77,
+          88,
+          89,
+          90
+        ]
+      },
+      {
+        "coordinators": [
+          "godot",
+          "unity",
+          "godot"
+        ],
+        "checkpoint_tick": 8,
+        "values": [
+          77,
+          88,
+          89,
+          90
+        ]
+      }
+    ],
+    "native": {
+      "graceful_handoff": {
+        "player": 3,
+        "term": 3,
+        "restored": 89,
+        "written": 90
+      },
+      "checkpoint_tick": 20,
+      "survivors": [
+        2,
+        3
+      ],
+      "term": 2,
+      "round": 1,
+      "restored_value": 77,
+      "next_value": 88,
+      "new_epoch": 2,
+      "directory_port": 43491,
+      "piece": 7,
+      "platform_mm": 3000,
+      "model_confirmed": [
+        2,
+        2
+      ],
+      "resume_and_write_ms": 1817
+    }
+  },
+  "island_matrix": {
+    "godot-godot": {
+      "bodies": 4,
+      "checkpoint": 45,
+      "steps": 25,
+      "before_mm": 427.61,
+      "after_mm": 2.87,
+      "cold_mm": 0,
+      "joint_mm": 0.02,
+      "reset": 0,
+      "final_mm": 2.87
+    },
+    "godot-unity": {
+      "bodies": 4,
+      "checkpoint": 45,
+      "steps": 25,
+      "before_mm": 206.29,
+      "after_mm": 44.72,
+      "cold_mm": 0,
+      "joint_mm": 0.57,
+      "reset": 0,
+      "final_mm": 44.72
+    },
+    "godot-cocos": {
+      "bodies": 4,
+      "checkpoint": 45,
+      "steps": 25,
+      "before_mm": 936.767,
+      "after_mm": 60.2645,
+      "cold_mm": 0,
+      "reset": 1,
+      "final_mm": 0,
+      "joint_mm": 0.230193
+    },
+    "unity-godot": {
+      "bodies": 4,
+      "checkpoint": 45,
+      "steps": 25,
+      "before_mm": 430.67,
+      "after_mm": 17.6,
+      "cold_mm": 0,
+      "joint_mm": 0.02,
+      "reset": 0,
+      "final_mm": 17.6
+    },
+    "unity-unity": {
+      "bodies": 4,
+      "checkpoint": 45,
+      "steps": 25,
+      "before_mm": 209.17,
+      "after_mm": 2.66,
+      "cold_mm": 0,
+      "joint_mm": 0.58,
+      "reset": 0,
+      "final_mm": 2.66
+    },
+    "unity-cocos": {
+      "bodies": 4,
+      "checkpoint": 45,
+      "steps": 25,
+      "before_mm": 939.776,
+      "after_mm": 63.8496,
+      "cold_mm": 0,
+      "reset": 1,
+      "final_mm": 0,
+      "joint_mm": 0.238419
+    },
+    "cocos-godot": {
+      "bodies": 4,
+      "checkpoint": 45,
+      "steps": 25,
+      "before_mm": 426.12,
+      "after_mm": 17.24,
+      "cold_mm": 0,
+      "joint_mm": 0.02,
+      "reset": 0,
+      "final_mm": 17.24
+    },
+    "cocos-unity": {
+      "bodies": 4,
+      "checkpoint": 45,
+      "steps": 25,
+      "before_mm": 204.8,
+      "after_mm": 24.61,
+      "cold_mm": 0,
+      "joint_mm": 0.58,
+      "reset": 0,
+      "final_mm": 24.61
+    },
+    "cocos-cocos": {
+      "bodies": 4,
+      "checkpoint": 45,
+      "steps": 25,
+      "before_mm": 935.254,
+      "after_mm": 7.37775,
+      "cold_mm": 0,
+      "reset": 0,
+      "final_mm": 7.37775,
+      "joint_mm": 0.219107
+    }
+  },
+  "strict_replay_exceeded_60mm": {
+    "godot-cocos": "island_measure before=0.936767 after=0.0602645 cold=0 gap=0.000230193 stack_height=0.994563 speed=0.971027",
+    "unity-cocos": "island_measure before=0.939776 after=0.0638496 cold=0 gap=0.000238419 stack_height=0.999862 speed=0.984162"
+  },
+  "regression": {
+    "plates": {
+      "cocos": {
+        "players": {
+          "cocos": {
+            "player": 1,
+            "first": 2,
+            "second": 3
+          },
+          "godot": {
+            "player": 2,
+            "first": 2,
+            "second": 3
+          },
+          "unity": {
+            "player": 3,
+            "first": 2,
+            "second": 3
+          }
+        },
+        "deadline_ms": 3200,
+        "wall_spread_ms": 16
+      },
+      "godot": {
+        "players": {
+          "godot": {
+            "player": 1,
+            "first": 2,
+            "second": 3
+          },
+          "unity": {
+            "player": 2,
+            "first": 2,
+            "second": 3
+          },
+          "cocos": {
+            "player": 3,
+            "first": 2,
+            "second": 3
+          }
+        },
+        "deadline_ms": 3200,
+        "wall_spread_ms": 32
+      },
+      "unity": {
+        "players": {
+          "unity": {
+            "player": 1,
+            "first": 2,
+            "second": 3
+          },
+          "cocos": {
+            "player": 2,
+            "first": 2,
+            "second": 3
+          },
+          "godot": {
+            "player": 3,
+            "first": 2,
+            "second": 3
+          }
+        },
+        "deadline_ms": 3200,
+        "wall_spread_ms": 40
+      }
+    },
+    "forecast_2d": {
+      "cocos": {
+        "cocos": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8357,
+          "max_sample_error_mm": 0
+        },
+        "godot": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8357,
+          "max_sample_error_mm": 72
+        },
+        "unity": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8357,
+          "max_sample_error_mm": 68
+        }
+      },
+      "godot": {
+        "godot": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8358,
+          "max_sample_error_mm": 0
+        },
+        "unity": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8358,
+          "max_sample_error_mm": 65
+        },
+        "cocos": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8358,
+          "max_sample_error_mm": 70
+        }
+      },
+      "unity": {
+        "unity": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8360,
+          "max_sample_error_mm": 0
+        },
+        "cocos": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8360,
+          "max_sample_error_mm": 102
+        },
+        "godot": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8360,
+          "max_sample_error_mm": 70
+        }
+      }
+    },
+    "forecast_3d": {
+      "cocos": {
+        "cocos": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8366,
+          "depth_mm": 2146,
+          "heading_mrad": 1093,
+          "max_sample_error_mm": 0
+        },
+        "godot": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8366,
+          "depth_mm": 2146,
+          "heading_mrad": 1093,
+          "max_sample_error_mm": 82
+        },
+        "unity": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8366,
+          "depth_mm": 2146,
+          "heading_mrad": 1093,
+          "max_sample_error_mm": 81
+        }
+      },
+      "godot": {
+        "godot": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8358,
+          "depth_mm": 2143,
+          "heading_mrad": 1086,
+          "max_sample_error_mm": 0
+        },
+        "unity": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8358,
+          "depth_mm": 2143,
+          "heading_mrad": 1086,
+          "max_sample_error_mm": 38
+        },
+        "cocos": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8358,
+          "depth_mm": 2143,
+          "heading_mrad": 1086,
+          "max_sample_error_mm": 87
+        }
+      },
+      "unity": {
+        "unity": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8360,
+          "depth_mm": 2143,
+          "heading_mrad": 1087,
+          "max_sample_error_mm": 0
+        },
+        "cocos": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8360,
+          "depth_mm": 2143,
+          "heading_mrad": 1087,
+          "max_sample_error_mm": 62
+        },
+        "godot": {
+          "contact": 1,
+          "slept": 1,
+          "woke": 1,
+          "final_mm": 8360,
+          "depth_mm": 2143,
+          "heading_mrad": 1087,
+          "max_sample_error_mm": 70
+        }
+      }
+    }
+  },
+  "codec": {
+    "self_release": [
+      {
+        "final_digest": 1124070639,
+        "frames": 600,
+        "delivered": 541,
+        "raw_bytes": 132682,
+        "encoded_bytes": 28754,
+        "retained_payload_peak_bytes": 6896,
+        "elapsed_us": 48633,
+        "process_cpu_ms": 62.5
+      },
+      {
+        "final_digest": 1124070639,
+        "frames": 600,
+        "delivered": 541,
+        "raw_bytes": 132682,
+        "encoded_bytes": 28754,
+        "retained_payload_peak_bytes": 6896,
+        "elapsed_us": 51541,
+        "process_cpu_ms": 46.875
+      },
+      {
+        "final_digest": 1124070639,
+        "frames": 600,
+        "delivered": 541,
+        "raw_bytes": 132682,
+        "encoded_bytes": 28754,
+        "retained_payload_peak_bytes": 6896,
+        "elapsed_us": 50884,
+        "process_cpu_ms": 62.5
+      }
+    ],
+    "original": {
+      "engine": "Godot 4.7.1, Fusion Godot Preview 684 single-player",
+      "frames": 600,
+      "final_digest": 1124070639,
+      "layout_words": 134,
+      "scalar_getter_reads": 0,
+      "has_shadow": false,
+      "remote_peers": 0,
+      "encoded_bytes": null,
+      "codec_cpu_ms": null
+    }
+  }
+}
