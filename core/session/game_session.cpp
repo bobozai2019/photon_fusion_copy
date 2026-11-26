@@ -41,7 +41,8 @@ GameSession::GameSession(std::unique_ptr<Outbound> owned, Outbound* link, Sessio
               if (!object(id)) return std::nullopt;
               const auto* grant = writers_.grant(id);
               return RpcWriter{writers_.writer(id), grant ? grant->epoch : 0};
-          }) {
+          },
+          [this](ObjectId id) { return host_ ? !state_.get(id) : replica_.destroyed(id); }) {
     term_ = options.term;
     if (!term_)
         throw std::invalid_argument("Invalid coordinator term");
@@ -52,6 +53,12 @@ GameSession::GameSession(std::unique_ptr<Outbound> owned, Outbound* link, Sessio
     else
         guest_.emplace(link_, options.room, options.resume, options.spectator, options.extended_join,
                        options.admission.coordinator);
+    writers_.commit_words_ = [this](ObjectId id, const Values& values, Tick now, const Words& words) {
+        return state_.capture_sample(id, values, now, &words);
+    };
+    if (options_.retain_spatial_writer_interest)
+        writers_.spatial_writer_changed_ = [this](ObjectId id, PlayerId writer) { state_.set_spatial_writer(id, writer); };
+    state_.on_destroy_ = [this](ObjectId id) { rpc_.forget(id); };
 }
 
 RoundId GameSession::round() const {
@@ -89,6 +96,8 @@ void GameSession::reset(TimePoint now) {
     state_.clear();
     replica_.clear();
     world_.reset();
+    properties_.reset(host_.has_value());
+    native_rpc_.reset();
     resumed_interest_.clear();
     prediction_.reset();
     codecs_.clear();
@@ -103,7 +112,7 @@ void GameSession::reset(TimePoint now) {
     if (host_ && round())
         for (const auto& [id, member] : host_->members())
             if (member.peer) {
-                state_.attach(member.peer);
+                state_.attach(member.peer, false, member.spectator ? 0 : id);
                 world_.attach(member.peer);
             }
 }
@@ -140,6 +149,7 @@ void GameSession::apply(const AppliedSnapshot& snapshot) {
         prediction_.forget(id);
     }
     for (const auto id : snapshot.destroyed) {
+        rpc_.forget(id);
         writers_.forget(id);
         prediction_.forget(id);
     }
@@ -164,6 +174,8 @@ void GameSession::ready(Peer peer) {
 }
 
 void GameSession::receive(const Event& event, TimePoint now) {
+    if (properties_.receive(*this, link_, event) || native_rpc_.receive(*this, link_, event, now))
+        return;
     if (event.type == EventType::Message && !event.payload.empty() &&
         (event.payload.front() == static_cast<unsigned>(GameMessage::RpcSkip) ||
          event.payload.front() == static_cast<unsigned>(GameMessage::RpcAck) ||
@@ -182,6 +194,7 @@ void GameSession::receive(const Event& event, TimePoint now) {
         return;
     if (host_) {
         if (event.type == EventType::Closed) {
+            properties_.detach(event.peer);
             if (auto* member = host_->member(event.peer); member && round())
                 CheckpointCodec::save_interest(*this,event.peer,member->id);
             writers_.detach(event.peer, tick_);
@@ -194,10 +207,12 @@ void GameSession::receive(const Event& event, TimePoint now) {
         const bool was_member = host_->member(event.peer) != nullptr;
         expire_members(now);
         host_->receive(event, now);
-        if (round() && !was_member && host_->member(event.peer)) {
-            state_.attach(event.peer);
-            world_.attach(event.peer);
-            CheckpointCodec::reattach(*this, event.peer, host_->member(event.peer)->id);
+        if (round() && !was_member) {
+            if (const auto* member = host_->member(event.peer)) {
+                state_.attach(event.peer, false, member->spectator ? 0 : member->id);
+                world_.attach(event.peer);
+                CheckpointCodec::reattach(*this, event.peer, member->id);
+            }
         }
     } else {
         auto previous = round();
@@ -256,8 +271,8 @@ void GameSession::receive(const Event& event, TimePoint now) {
     } else if (type == GameMessage::Snapshot || (type == GameMessage::CompactSnapshot && options_.compact)) {
         AppliedSnapshot applied;
         Bytes decoded;
-        uint32_t seq = 0, missing = 0;
-        if (type == GameMessage::CompactSnapshot && !decoder_.decode(in, decoded, seq, missing)) {
+        uint32_t seq = 0, missing = 0, anchor = 0;
+        if (type == GameMessage::CompactSnapshot && !decoder_.decode_with_anchor(in, decoded, seq, missing, anchor)) {
             if (missing) {
                 auto reset = game_packet(GameMessage::CodecReset, room(), round());
                 reset.u32(missing);
@@ -268,7 +283,7 @@ void GameSession::receive(const Event& event, TimePoint now) {
         Reader compact(decoded);
         if (replica_.apply(seq ? compact : in, room(), round(), applied)) {
             if (seq) {
-                decoder_.remember(seq, std::move(decoded));
+                decoder_.remember_received(seq, anchor, std::move(decoded));
                 codec_enabled_ = true;
                 auto ack = game_packet(GameMessage::CodecAck, room(), round());
                 ack.u32(seq);
@@ -294,6 +309,8 @@ void GameSession::expire_members(TimePoint now) {
     }
 }
 void GameSession::flush(TimePoint now) {
+    properties_.flush(*this, link_);
+    native_rpc_.flush(*this, link_, now);
     expire_members(now);
     if (directory_) {
         listing_.occupied = uint8_t(host_->members().size());
@@ -323,12 +340,15 @@ void GameSession::flush(TimePoint now) {
         for (const auto& [player, member] : host_->members()) {
             if (!member.peer)
                 continue;
-            auto codec = codecs_.find(member.peer);
-            auto packets = state_.packets(member.peer, room(), round(), tick_, retry_ticks);
-            if (codec != codecs_.end())
-                for (auto& packet : packets)
-                    packet = codec->second.encode(packet, room(), round());
-            link_.send_messages(member.peer, Lane::Game, std::move(packets));
+            // Wait for the reliable FIFO to accept its unsent suffix before adding more state.
+            // The next offer will use current revisions against the same per-peer ACKs.
+            if (link_.admit_snapshot(member.peer)) {
+                auto codec = codecs_.find(member.peer);
+                auto packets = state_.packets(member.peer, room(), round(), tick_, retry_ticks);
+                if (codec != codecs_.end())
+                    codec->second.encode_batch(packets, room(), round());
+                link_.send_messages(member.peer, Lane::Game, std::move(packets));
+            }
             ready(member.peer);
         }
     } else if (clock_.probe_due(now)) {

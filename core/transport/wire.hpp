@@ -17,6 +17,7 @@ public:
     void f32(float value);
     void append(const Bytes& bytes);
     const Bytes& bytes() const { return bytes_; }
+    void reserve(std::size_t size) { bytes_.reserve(size); }
     void clear() { bytes_.clear(); }
     Bytes take();
 
@@ -36,6 +37,7 @@ public:
     bool u64(std::uint64_t& value);
     bool f32(float& value);
     bool read(std::size_t size, Bytes& result);
+    bool slice(std::size_t size, Reader& result);
     std::size_t remaining() const { return remaining_; }
     bool done() const { return remaining_ == 0; }
 

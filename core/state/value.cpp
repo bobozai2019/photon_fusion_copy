@@ -52,6 +52,16 @@ struct WordWriter {
     void u32(std::uint32_t value) { *word++ = value; }
     void u64(std::uint64_t value) { u32(std::uint32_t(value)); u32(std::uint32_t(value >> 32)); }
     void f32(float value) { std::uint32_t bits; std::memcpy(&bits, &value, sizeof(bits)); u32(bits); }
+    void append(const Bytes& bytes) {
+        // Byte arrays start on a word boundary after the length word.
+        std::size_t offset = 0;
+        for (; bytes.size() - offset >= 4; offset += 4) {
+            const auto* at = bytes.data() + offset;
+            u32(std::uint32_t(at[0]) | (std::uint32_t(at[1]) << 8) |
+                (std::uint32_t(at[2]) << 16) | (std::uint32_t(at[3]) << 24));
+        }
+        for (; offset < bytes.size(); ++offset) u8(bytes[offset]);
+    }
 };
 
 struct WordReader {
@@ -152,12 +162,16 @@ template<typename Output> void write_value_to(Output& out, const Value& value)
         else if constexpr (std::is_same_v<T, bool>) out.u8(v);
         else if constexpr (std::is_same_v<T, std::int32_t>) out.u32(static_cast<std::uint32_t>(v));
         else if constexpr (std::is_same_v<T,ObjectReference>) out.u64(v.value);
+        else if constexpr (std::is_same_v<T, Bytes>) {
+            out.u16(static_cast<std::uint16_t>(v.size()));
+            out.append(v);
+        }
         else {
-            if constexpr (std::is_same_v<T, Bytes> || std::is_same_v<T,Vector2Array> ||
+            if constexpr (std::is_same_v<T,Vector2Array> ||
                           std::is_same_v<T,IntMap> || std::is_same_v<T,IntLinkedList> || std::is_same_v<T, std::string> || std::is_same_v<T, IntArray> || std::is_same_v<T, FloatArray>)
                 out.u16(static_cast<std::uint16_t>(v.size()));
             for (const auto n : v) {
-                if constexpr (std::is_same_v<T, std::string> || std::is_same_v<T,Bytes>) out.u8(static_cast<std::uint8_t>(n));
+                if constexpr (std::is_same_v<T, std::string>) out.u8(static_cast<std::uint8_t>(n));
                 else if constexpr (std::is_same_v<T,Vector2Array>) { out.f32(n[0]); out.f32(n[1]); }
                 else if constexpr (std::is_same_v<T,IntMap>) { out.u32(n.first); out.u32(n.second); }
                 else if constexpr (std::is_same_v<T, IntArray> || std::is_same_v<T,IntLinkedList>) out.u32(static_cast<std::uint32_t>(n));
@@ -199,7 +213,10 @@ template<typename Input> bool read_value_from(Input& in, Field field, Value& val
             if (!read_floats(in, v)) return false;
             value = std::move(v);
         } else if (field.type == FieldType::ByteArray) {
-            Bytes v; if (!in.read(count,v)) return false; value=std::move(v);
+            if (auto* bytes = std::get_if<Bytes>(&value)) return in.read(count, *bytes);
+            Bytes bytes;
+            if (!in.read(count, bytes)) return false;
+            value = std::move(bytes);
         } else if (field.type == FieldType::Vec2List) {
             if (count > in.remaining()/8) return false;
             Vector2Array v(count);
@@ -343,6 +360,12 @@ static bool read_word_varuint(Reader& in, std::uint32_t& value)
 bool read_word_changes(Reader& in, const WordLayout& layout, Words* words, std::uint64_t& changed,
                        bool allow_empty)
 {
+    return read_word_changes_into(in, layout, words ? words->data() : nullptr, changed, allow_empty);
+}
+
+bool read_word_changes_into(Reader& in, const WordLayout& layout, std::uint32_t* words, std::uint64_t& changed,
+                            bool allow_empty)
+{
     const auto& offsets = layout.offsets;
     std::uint32_t count;
     if (!read_word_varuint(in, count) || (!count && !allow_empty) || count > offsets.back() ||
@@ -354,8 +377,8 @@ bool read_word_changes(Reader& in, const WordLayout& layout, Words* words, std::
             !read_word_varuint(in, encoded)) return false;
         position += skip;
         const auto value = (encoded >> 1) ^ (0u - (encoded & 1));
-        if (words && (*words)[position] != value) {
-            (*words)[position] = value;
+        if (words && words[position] != value) {
+            words[position] = value;
             while (position >= offsets[field + 1]) ++field;
             changed |= std::uint64_t{1} << field;
         }

@@ -33,7 +33,8 @@ class SessionWorld {
     bool change_map(SceneId id, std::string asset);
     bool loaded(SceneId id, std::uint32_t generation);
     const auto &maps() const { return maps_; }
-    ObjectId spawn(SchemaId schema, PlayerId owner, const Values &fields, ObjectIdentity identity = {});
+    ObjectId spawn(SchemaId schema, PlayerId owner, const Values &fields, ObjectIdentity identity = {},
+                   const Distribution& distribution = {});
     bool reparent(ObjectId child, ObjectId parent);
     bool destroy(ObjectId id);
     ObjectId find(SceneId scene, std::uint64_t key) const;
@@ -47,6 +48,13 @@ class SessionWorld {
     ObjectReference field_reference(ObjectId id) const;
     ObjectId resolve_field(ObjectReference reference) const;
     std::uint32_t request_spawn(SchemaId schema, SceneId scene);
+    bool register_spawn_template(uint32_t id, SchemaId schema, ClaimMode mode, Distribution distribution);
+    uint64_t request_initialized(uint32_t template_id, const Values& initial);
+    ObjectId spawn_template(uint32_t template_id, const Values& values);
+    bool can_request_initialized() const;
+    bool native_spawn_ready() const { return native_ready_; }
+    bool request_despawn(ObjectId id, uint64_t pending_reference = 0);
+    void set_guest_spawns_allowed(bool allowed) { allow_guest_spawns_ = allowed; }
     std::function<void(std::uint32_t, ObjectId)> on_spawn_result;
     std::function<void(const MapInstance &, bool added)> on_map;
     std::function<void(ObjectId)> on_identity;
@@ -70,17 +78,27 @@ class SessionWorld {
     std::map<ObjectId, ObjectIdentity> objects_;
     std::map<SchemaId, std::function<Values(PlayerId, SceneId)>> factories_;
     uint32_t issue_spawn(SchemaId schema, SceneId scene, bool referenced);
+    ObjectId spawn_template(uint32_t id, PlayerId creator, uint64_t reference, const Values& values);
+    void receive_initialized(Peer peer, Reader& in);
+    void receive_despawn(Peer peer, Reader& in);
+    void send_spawn_result(Peer peer, uint32_t request, ObjectId id);
+    struct SpawnTemplate { SchemaId schema; ClaimMode mode; Distribution distribution; };
+    std::map<uint32_t, SpawnTemplate> templates_;
+    uint32_t native_key_ = 0;
+    bool allow_guest_spawns_ = true;
     std::set<SchemaId> creator_models_;
     uint32_t namespace_ = 0;
     std::uint32_t map_version_ = 0, next_request_ = 0;
     std::optional<Tick> hello_;
     bool supported_ = false;
+    bool native_ready_ = false;
     std::set<std::uint32_t> outstanding_;
     struct PeerWorld {
         bool supported = false, extended = false;
         std::uint32_t maps_sent = 0, last_request = 0;
         uint32_t creation_namespace = 0;
         bool namespace_sent = false;
+        bool native_ready_sent = false;
         ObjectId last_result = 0;
         std::set<SceneId> ready;
         std::map<ObjectId, ObjectIdentity> seen;

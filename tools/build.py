@@ -150,7 +150,8 @@ def build_and_install(product, args, install, cmake, config, build_dir):
             cache.mkdir(parents=True, exist_ok=True)
             cpp = sdk_sources(cache)
         flags += [f"-DNETCODE_GODOT_CPP={cpp.resolve()}", "-DGODOTCPP_TARGET=" +
-                  ("template_debug" if config == "Debug" else "template_release")]
+                  ("template_debug" if config == "Debug" else "template_release"),
+                  "-DNETCODE_GODOT_LEGACY_SCRIPTS=" + ("OFF" if args.godot_native_only else "ON")]
     elif product == "cocos":
         flags += [f"-DCOCOS2DX_ROOT={args.cocos_root.resolve()}",
                   f"-DNETCODE_COCOS_PHYSICS2D={args.physics2d}", f"-DNETCODE_COCOS_PHYSICS3D={args.physics3d}"]
@@ -172,7 +173,8 @@ def build_and_install(product, args, install, cmake, config, build_dir):
             destination.mkdir(parents=True, exist_ok=True)
             sync_install(staging, destination, build_dir / "sdk-install.json")
             if args.package:
-                package(staging, product, config, work)
+                package_product = "godot-native" if product == "godot" and args.godot_native_only else product
+                package(staging, package_product, config, work)
             completed = True
     finally:
         if not completed and (work / "rollback-previous").exists():
@@ -191,6 +193,7 @@ def main():
     parser.add_argument("--cmake", type=Path)
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--godot-cpp", type=Path, help="Already extracted godot-cpp 4.5 source")
+    parser.add_argument("--godot-native-only", action="store_true", help="Install Godot without legacy script paths")
     parser.add_argument("--cocos-root", type=Path, default=REPO.parent / "cocos2d-x-4")
     parser.add_argument("--physics2d", choices=["ON", "OFF"], default="ON")
     parser.add_argument("--physics3d", choices=["ON", "OFF"], default="ON")
@@ -198,6 +201,8 @@ def main():
     args = parser.parse_args()
     if args.jobs < 1 or (args.core_prefix and args.product not in PLATFORMS):
         parser.error("Use positive --jobs and reserve --core-prefix for a single platform")
+    if args.godot_native_only and args.product not in ("godot", "all"):
+        parser.error("--godot-native-only requires the Godot SDK")
     ROOT.mkdir(exist_ok=True)
     install = item_at(ROOT, Path("install/win-x64-msvc-mt") / args.config)
     products = list(SOURCES) if args.product == "all" else [args.product]

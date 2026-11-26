@@ -1,5 +1,7 @@
 #include "session/checkpoint.hpp"
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 
 namespace netcode {
 namespace {
@@ -10,7 +12,8 @@ struct SavedObject {
     std::optional<ObjectIdentity> identity;
     std::optional<ObjectGrant> writer;
     PlayerId input = 0;
-    Tick input_epoch = 0, consumed = 0, simulated = 0;
+    Tick input_epoch = 0, consumed = 0, simulated = 0, model_tick = 0;
+    double local_input_credit = 0;
 };
 void put_rates(Writer& out, const std::map<uint64_t, uint16_t>& keys) {
     out.u32(uint32_t(keys.size()));
@@ -44,7 +47,9 @@ Bytes CheckpointCodec::capture(const GameSession& g) {
         return {};
     const auto& h = *g.host_;
     Writer out;
-    out.u32(magic + unsigned(h.options_.player_ttl_ms.has_value()) + (g.world_.namespace_ ? 2 : 0));
+    const bool native_state = g.world_.native_key_ || g.properties_.ready();
+    out.u32(magic + unsigned(h.options_.player_ttl_ms.has_value()) + (g.world_.namespace_ ? 2 : 0) +
+            (native_state ? 4 : 0));
     out.u64(g.room());
     out.u64(g.round());
     out.u32(g.term_);
@@ -140,6 +145,13 @@ Bytes CheckpointCodec::capture(const GameSession& g) {
             out.u32(b.consumed);
             out.u32(b.simulated);
             out.u32(g.prediction_.signature(o.schema));
+            if (g.prediction_.models_.at(o.schema).timed_input) {
+                out.u32(b.model_tick);
+                uint64_t credit;
+                static_assert(sizeof(credit) == sizeof(b.local_input_credit), "64-bit checkpoint duration");
+                std::memcpy(&credit, &b.local_input_credit, sizeof(credit));
+                out.u64(credit);
+            }
         }
         if (out.bytes().size() > max_size)
             return {};
@@ -155,13 +167,18 @@ Bytes CheckpointCodec::capture(const GameSession& g) {
         }
     }
     if (g.world_.namespace_) out.u32(g.world_.namespace_);
+    if (native_state) {
+        out.u32(g.world_.native_key_);
+        g.properties_.write_checkpoint(out);
+    }
     return out.bytes().size() <= max_size ? out.take() : Bytes{};
 }
 bool CheckpointCodec::header(Reader& r, CheckpointHeader& h) {
     uint32_t m;
-    if (!r.u32(m) || (m < magic || m > magic + 3)) return false;
+    if (!r.u32(m) || (m < magic || m > magic + 7)) return false;
     h.has_seat_ttl = (m - magic) & 1;
     h.has_namespace = (m - magic) & 2;
+    h.has_native_state = (m - magic) & 4;
     return r.u64(h.room) && h.room && r.u64(h.round) && h.round && r.u32(h.term) &&
            h.term && r.u32(h.coordinator) && h.coordinator && r.u32(h.tick) && h.tick && r.u32(h.step_ms) &&
            h.step_ms && h.step_ms <= 60000;
@@ -251,7 +268,9 @@ bool CheckpointCodec::restore(GameSession& g, const Bytes& image, TimePoint now)
             return false;
         for (unsigned j = 0; j < deps; ++j) {
             ObjectId id;
-            if (!in.u32(id) || !objects.count(id) || (!o.dependencies.empty() && id <= o.dependencies.back()))
+            // A lower ID can belong to a destroyed prerequisite. Keep that edge so
+            // interest resolution continues to withhold the dependent object.
+            if (!in.u32(id) || !id || id >= o.id || (!o.dependencies.empty() && id <= o.dependencies.back()))
                 return false;
             o.dependencies.push_back(id);
         }
@@ -319,12 +338,20 @@ bool CheckpointCodec::restore(GameSession& g, const Bytes& image, TimePoint now)
                 !in.u32(sig) || !g.prediction_.models_.count(o.schema) ||
                 g.prediction_.signature(o.schema) != sig)
                 return false;
+            if (g.prediction_.models_.at(o.schema).timed_input) {
+                uint64_t credit;
+                if (!in.u32(saved.model_tick) || !saved.model_tick || !in.u64(credit)) return false;
+                std::memcpy(&saved.local_input_credit, &credit, sizeof(credit));
+                if (!std::isfinite(saved.local_input_credit) || saved.local_input_credit < 0 ||
+                    saved.local_input_credit > saved.consumed ||
+                    (saved.input != h.coordinator && saved.local_input_credit != 0)) return false;
+            }
         }
         objects.emplace(o.id, std::move(saved));
     }
     if (h.has_seat_ttl) {
         uint32_t ttl;
-        if (!in.u32(ttl) || in.remaining() != members.size() * 4 + (h.has_namespace ? 4 : 0)) return false;
+        if (!in.u32(ttl)) return false;
         admission.player_ttl_ms = ttl;
         for (auto& [id, m] : members) {
             uint32_t remaining;
@@ -334,6 +361,10 @@ bool CheckpointCodec::restore(GameSession& g, const Bytes& image, TimePoint now)
     }
     uint32_t creation_namespace = 0;
     if (h.has_namespace && (!in.u32(creation_namespace) || !creation_namespace)) return false;
+    uint32_t native_key = 0, property_revision = 0;
+    RoomProperties::Values properties;
+    if (h.has_native_state && (!in.u32(native_key) ||
+        !g.properties_.read_checkpoint(in, property_revision, properties))) return false;
     if (!in.done()) return false;
     std::set<uint64_t> references;
     for (const auto& [id, s] : objects)
@@ -344,7 +375,11 @@ bool CheckpointCodec::restore(GameSession& g, const Bytes& image, TimePoint now)
             size_t depth = 0;
             while (parent) {
                 auto it = objects.find(parent);
-                if (it == objects.end() || !it->second.identity || ++depth > objects.size())
+                if (it == objects.end()) {
+                    if (parent > high) return false;
+                    break;
+                }
+                if (!it->second.identity || ++depth > objects.size())
                     return false;
                 parent = it->second.identity->parent;
             }
@@ -366,6 +401,11 @@ bool CheckpointCodec::restore(GameSession& g, const Bytes& image, TimePoint now)
     g.clock_.update(now);
     g.resumed_interest_ = std::move(scopes);
     g.world_.namespace_ = creation_namespace;
+    g.world_.native_key_ = native_key;
+    if (property_revision) {
+        g.properties_.revision_ = property_revision;
+        g.properties_.values_ = std::move(properties);
+    }
     g.world_.map_version_ = version;
     g.world_.maps_ = std::move(scenes);
     std::vector<ObjectId> retire;
@@ -388,8 +428,11 @@ bool CheckpointCodec::restore(GameSession& g, const Bytes& image, TimePoint now)
             ++grant.epoch;
             if (grant.writer == h.coordinator)
                 grant.writer = g.coordinator();
-            if (grant.writer != g.coordinator())
+            if (grant.writer != g.coordinator()) {
                 g.writers_.restoring_writer_.insert(id);
+                if (g.options_.retain_spatial_writer_interest)
+                    g.state_.entries_.at(id).spatial_writer = grant.writer;
+            }
             g.writers_.grants_[id] = std::move(grant);
             g.writers_.last_transfer_[id] = h.tick;
         }
@@ -400,8 +443,13 @@ bool CheckpointCodec::restore(GameSession& g, const Bytes& image, TimePoint now)
             b.epoch = s.input_epoch + 1;
             b.consumed = s.consumed;
             b.simulated = s.simulated;
+            b.model_tick = s.model_tick;
+            b.local_input_credit = s.local_input_credit;
         }
     }
+    // Parent IDs can be higher than their children, so count links after insertion.
+    for (const auto& [id, entry] : g.state_.entries_)
+        g.state_.track_dependencies(entry, true);
     g.state_.highest_id_ = high;
     for (auto id : retire)
         if (g.object(id))

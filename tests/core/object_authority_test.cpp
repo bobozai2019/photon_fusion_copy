@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 
 namespace {
@@ -26,6 +27,7 @@ public:
               const auto it = objects.find(id);
               return it == objects.end() ? nullptr : &it->second;
           }, [this](ObjectId id, const Values& values, Tick) {
+              if (!commit_allowed) return false;
               ++commits;
               auto& object = objects.at(id);
               ++object.revision;
@@ -36,7 +38,8 @@ public:
         check(schemas.add({1, 1, {{10, FieldType::Float}, {20, FieldType::Flag}}}), "piece schema");
         check(schemas.add({2, 1, {{10, FieldType::Float}, {20, FieldType::Float}}}), "motion schema");
         check(writers.register_model(1, 1, {10}, 0,
-            [](const Object&, const AuthoritySample&, const AuthoritySample& next, Tick) {
+            [this](const Object&, const AuthoritySample&, const AuthoritySample& next, Tick) {
+                if (on_piece_validate) on_piece_validate(next);
                 const auto cell = std::get<float>(next.values[0]);
                 return cell >= 0 && cell <= 15 && cell == std::trunc(cell);
             }), "piece model");
@@ -59,6 +62,8 @@ public:
     Schemas schemas;
     std::map<ObjectId, Object> objects;
     unsigned commits = 0, notifications = 0;
+    bool commit_allowed = true;
+    std::function<void(const AuthoritySample&)> on_piece_validate;
     ObjectAuthority writers;
     std::vector<Event> grants;
 };
@@ -75,10 +80,46 @@ Bytes state(RoundId round_id, ObjectId id, unsigned epoch, Tick sequence, float 
     return packet.take();
 }
 
+void test_nested_and_retried_samples()
+{
+    Node host(1), guest(2);
+    host.link.link(guest.link);
+    host.writers.attach(1, 2);
+    host.objects = {{piece, {piece, 1, 1, 1, 1, {2.f, true}}},
+                    {motion, {motion, 1, 1, 1, 1, {3.f, false}}}};
+    guest.objects = host.objects;
+    host.writers.flush();
+    guest.receive();
+    guest.writers.flush();
+    host.receive();
+    check(host.writers.assign(piece, 2, 30) && host.writers.assign(motion, 2, 30),
+          "two compatible grants for nested receive");
+    host.on_piece_validate = [&](const AuthoritySample& next) {
+        if (next.values != Values{5.f}) return;
+        check(host.writers.receive({EventType::Message, 1, Lane::Game, state(round_id, motion, 1, 1, 9.f)}, 40),
+              "nested authority message handled");
+        check(next.values == Values{5.f}, "nested receive changed the sample being validated");
+    };
+    check(host.writers.receive({EventType::Message, 1, Lane::Game, state(round_id, piece, 1, 1, 5.f)}, 40) &&
+          host.commits == 2 && host.objects.at(piece).values == Values{5.f, true} &&
+          host.objects.at(motion).values == Values{9.f, false}, "nested samples retain independent fields");
+
+    const Event update{EventType::Message, 1, Lane::Game, state(round_id, piece, 1, 2, 6.f)};
+    host.commit_allowed = false;
+    check(host.writers.receive(update, 41) && host.writers.grant(piece)->confirmed == 1 &&
+          host.writers.grant(piece)->sample.values == Values{5.f} && host.commits == 2,
+          "rejected commit altered the accepted sample");
+    host.commit_allowed = true;
+    check(host.writers.receive(update, 42) && host.writers.grant(piece)->confirmed == 2 &&
+          host.objects.at(piece).values == Values{6.f, true} && host.commits == 3,
+          "valid retry used a rejected or nested sample");
+}
+
 }
 
 int main()
 {
+    test_nested_and_retried_samples();
     Node host(1), b(2), c(3), legacy(4, 9);
     host.link.link(b.link);
     host.link.link(c.link);

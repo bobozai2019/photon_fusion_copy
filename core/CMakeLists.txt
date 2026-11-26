@@ -3,7 +3,6 @@ project(NetcodeCore VERSION 0.1.0 LANGUAGES CXX)
 include(CTest)
 include(CMakePackageConfigHelpers)
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/SdkBuildId.cmake")
-netcode_build_id(CORE_ID "${CMAKE_CURRENT_SOURCE_DIR}")
 option(NETCODE_STEAM "Build the optional Steamworks P2P transport" OFF)
 option(NETCODE_DIRECT "Build the legacy TCP+UDP transport and LAN discovery" ON)
 option(NETCODE_TRANSPORT_HOST "Build the transport provider host adapter" ON)
@@ -13,10 +12,12 @@ add_library(netcode_core STATIC
     transport/wire.cpp
     transport/memory.cpp
     session/room.cpp
+    session/room_properties.cpp
     session/discovery.cpp
     session/checkpoint.cpp
     session/migration.cpp
     session/rpc.cpp
+    session/native_rpc.cpp
     session/object_authority.cpp
     session/ownership_requests.cpp
     session/network_clock.cpp
@@ -34,7 +35,9 @@ target_compile_features(netcode_core PUBLIC cxx_std_17)
 target_include_directories(netcode_core PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>" "$<INSTALL_INTERFACE:include/netcode>")
 set(network "${CMAKE_CURRENT_SOURCE_DIR}/../network")
+set(network_inputs ../network/api/netcode/transport_provider.h)
 if(NETCODE_DIRECT AND (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
+    list(APPEND network_inputs ../network/direct/direct.cpp)
     add_library(netcode_direct STATIC "${network}/direct/direct.cpp" transport/lan_directory.cpp)
     target_include_directories(netcode_direct PRIVATE "${network}/api")
     target_link_libraries(netcode_direct PUBLIC netcode_core)
@@ -43,6 +46,8 @@ if(NETCODE_DIRECT AND (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
     endif()
 endif()
 if(NETCODE_TRANSPORT_HOST)
+    list(APPEND network_inputs ../network/host/provider.cpp ../network/host/provider.hpp
+        ../network/host/game.cpp ../network/host/game.hpp ../network/tcp/limits.hpp)
     add_library(netcode_transport_host STATIC "${network}/host/provider.cpp" "${network}/host/game.cpp")
     target_include_directories(netcode_transport_host
         PUBLIC "$<BUILD_INTERFACE:${network}>" "$<BUILD_INTERFACE:${network}/api/netcode>")
@@ -60,6 +65,9 @@ if(NETCODE_STEAM)
         if(NOT EXISTS "${NETCODE_STEAMWORKS_ROOT}/${steam_file}")
             message(FATAL_ERROR "NETCODE_STEAMWORKS_ROOT must contain ${steam_file}.")
         endif()
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${NETCODE_STEAMWORKS_ROOT}/${steam_file}")
+        file(SHA256 "${NETCODE_STEAMWORKS_ROOT}/${steam_file}" digest)
+        list(APPEND steam_inputs "${steam_file}=${digest}")
     endforeach()
     add_library(netcode_steam STATIC transport/steam_p2p.cpp transport/steam_directory.cpp)
     target_include_directories(netcode_steam SYSTEM PRIVATE "${NETCODE_STEAMWORKS_ROOT}/public")
@@ -67,6 +75,9 @@ if(NETCODE_STEAM)
         "$<BUILD_INTERFACE:${NETCODE_STEAMWORKS_ROOT}/redistributable_bin/win64/steam_api64.lib>" "$<INSTALL_INTERFACE:NetcodeSteamworks>")
 endif()
 
+netcode_build_id(CORE_ID "${CMAKE_CURRENT_SOURCE_DIR}"
+    OPTIONS "direct=${NETCODE_DIRECT}" "transport_host=${NETCODE_TRANSPORT_HOST}" "steam=${NETCODE_STEAM}" ${steam_inputs}
+    EXTRA_INPUTS ${network_inputs})
 
 target_compile_definitions(netcode_core PRIVATE NETCODE_CORE_BUILD_ID="${CORE_ID}")
 set(core_targets netcode_core)
@@ -84,12 +95,15 @@ endif()
 if(TARGET netcode_transport_host)
     list(APPEND core_targets netcode_transport_host)
     install(FILES "${network}/host/provider.hpp" "${network}/host/game.hpp" DESTINATION include/netcode/host)
+    install(FILES "${network}/tcp/limits.hpp" DESTINATION include/netcode/tcp)
 endif()
 set_target_properties(${core_targets} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 install(TARGETS ${core_targets} EXPORT NetcodeCoreTargets ARCHIVE DESTINATION lib)
 install(FILES "${network}/api/netcode/transport_provider.h" DESTINATION include/netcode)
 install(DIRECTORY session state transport DESTINATION include/netcode FILES_MATCHING PATTERN "*.hpp")
 install(FILES build_info.hpp DESTINATION include/netcode)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/build-id.txt" "${CORE_ID}\n")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/build-id.txt" DESTINATION .)
 if(MSVC)
     if(NOT CMAKE_MSVC_RUNTIME_LIBRARY)
         set(crt "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")

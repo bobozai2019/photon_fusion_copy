@@ -1,5 +1,5 @@
 @tool
-extends EditorPlugin
+extends NetcodeEditorPlugin
 
 const Inspector = preload("inspector.gd")
 const Replica = preload("../scene_replicator.gd")
@@ -17,7 +17,8 @@ func _enter_tree() -> void:
 func _selection_changed() -> void:
     if not is_inside_tree(): return
     var selected := EditorInterface.get_selection().get_selected_nodes()
-    var replica: Replica = selected[0] as Replica if selected.size() == 1 else null
+    var replica: Node = selected[0] if selected.size() == 1 else null
+    if not (replica is Replica or replica is NetcodeReplicator): replica = null
     if replica and panel and panel.replica == replica: return
     _remove_panel()
     if replica == null: return

@@ -12,8 +12,10 @@ constexpr auto retry_period = std::chrono::milliseconds(100);
 
 }
 
-Rpc::Rpc(Transport& transport, bool host, Owner owner, Handler handle, Known known, WriterLookup writer)
-    : transport_(transport), host_(host), owner_(std::move(owner)), writer_(std::move(writer)), handle_(std::move(handle)), known_(std::move(known)) {}
+Rpc::Rpc(Transport& transport, bool host, Owner owner, Handler handle, Known known, WriterLookup writer,
+         Destroyed destroyed)
+    : transport_(transport), host_(host), owner_(std::move(owner)), writer_(std::move(writer)),
+      handle_(std::move(handle)), known_(std::move(known)), destroyed_(std::move(destroyed)) {}
 
 std::deque<RpcOutcome> Rpc::take_outcomes() { return std::exchange(outcomes_, {}); }
 
@@ -44,7 +46,7 @@ void Rpc::reset(RoomId room, RoundId round, PlayerId local, PlayerId master)
     master_=master;
     for (const auto& [channel, stream] : outgoing_)
         for (const auto& [seq, p] : stream.packets)
-            record(p.token,channel.first,channel.second,p.method,RpcStatus::RoundEnded);
+            record(p.token,channel.second,channel.first,p.method,RpcStatus::RoundEnded);
     cancellable_.clear();
     room_ = room;
     round_ = round;
@@ -65,19 +67,31 @@ void Rpc::detach(Peer peer)
 {
     cancellable_.erase(peer);
     for (auto it = outgoing_.begin(); it != outgoing_.end();) {
-        if (it->first.first != peer) {
+        if (it->first.second != peer) {
             ++it;
             continue;
         }
-        for (const auto& [seq,p] : it->second.packets) record(p.token,peer,it->first.second,p.method,RpcStatus::PeerLeft);
+        for (const auto& [seq,p] : it->second.packets) record(p.token,peer,it->first.first,p.method,RpcStatus::PeerLeft);
         queued_ -= it->second.packets.size();
         it = outgoing_.erase(it);
     }
     peers_.erase(peer);
     for (auto it = incoming_.begin(); it != incoming_.end();) {
-        if (it->first.first == peer) it = incoming_.erase(it);
+        if (it->first.second == peer) it = incoming_.erase(it);
         else ++it;
     }
+}
+
+void Rpc::forget(ObjectId object)
+{
+    for (auto it = outgoing_.lower_bound({object, 0}); it != outgoing_.end() && it->first.first == object;) {
+        for (const auto& [sequence, packet] : it->second.packets)
+            record(packet.token, it->first.second, object, packet.method, RpcStatus::ObjectGone);
+        queued_ -= it->second.packets.size();
+        it = outgoing_.erase(it);
+    }
+    for (auto it = incoming_.lower_bound({object, 0}); it != incoming_.end() && it->first.first == object;)
+        it = incoming_.erase(it);
 }
 
 Peer Rpc::peer_for(PlayerId player) const
@@ -140,7 +154,7 @@ bool Rpc::transmit(Peer peer, const Method& method, const RpcCall& call, std::ui
     std::uint32_t sequence = 0;
     Outgoing* outgoing = nullptr;
     if (method.reliability == Reliability::Reliable) {
-        outgoing = &outgoing_[{peer, call.object}];
+        outgoing = &outgoing_[{call.object, peer}];
         if (queued_ >= max_queued || outgoing->packets.size() >= window || outgoing->next == UINT32_MAX) {
             record(token,peer,call.object,call.method,RpcStatus::QueueFull); return false;
         }
@@ -205,16 +219,17 @@ void Rpc::receive(Peer peer, GameMessage type, Reader& payload)
         return;
     }
 
-    const ObjectId object = call.object;
-    if (object && !outgoing_.count({peer, object}) && !incoming_.count({peer, object}) &&
-        !owner_(object)) return;
     ordered(peer,sequence,std::move(call));
 }
 
 void Rpc::ordered(Peer peer, std::uint32_t sequence, RpcCall call)
 {
     const auto object = call.object;
-    auto& stream = incoming_[{peer, object}];
+    const Channel channel{object, peer};
+    if (object && ((destroyed_ && destroyed_(object)) ||
+        (!outgoing_.count(channel) && !incoming_.count(channel) && !owner_(object) && (host_ || call.method))))
+        return;
+    auto& stream = incoming_[channel];
     if (sequence >= stream.next && sequence - stream.next < window) {
         if (call.method) stream.calls.emplace(sequence, std::move(call));
         else stream.calls[sequence] = std::move(call);
@@ -241,7 +256,7 @@ void Rpc::rpc_ack(Peer peer, Reader& payload)
     ObjectId object;
     std::uint32_t through;
     if (!payload.u32(object) || !payload.u32(through) || !payload.done()) return;
-    const auto found = outgoing_.find({peer, object});
+    const auto found = outgoing_.find({object, peer});
     if (found == outgoing_.end() || through >= found->second.next) return;
     auto& packets = found->second.packets;
     for (auto it = packets.begin(); it != packets.end() && it->first <= through;) {
@@ -256,7 +271,7 @@ void Rpc::update(TimePoint now)
     if (now < retry_) return;
     retry_ = now + retry_period;
     for (auto& [channel, stream] : outgoing_) {
-        const auto [peer,id] = channel;
+        const auto [id,peer] = channel;
         for (auto& [sequence, p] : stream.packets) {
             if (p.cancelled) continue;
             const bool gone = id && !owner_(id);

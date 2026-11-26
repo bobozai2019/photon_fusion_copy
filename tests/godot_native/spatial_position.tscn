@@ -1,0 +1,16 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://spatial_position.gd" id="1"]
+
+[sub_resource type="NetcodeReplicationConfig" id="config"]
+properties = Array[NodePath]([NodePath(":position_xz"), NodePath(":value")])
+apply_proxy_changes_only = true
+
+[node name="SpatialPosition" type="Node"]
+script = ExtResource("1")
+
+[node name="Sync" type="NetcodeSharedReplicator" parent="."]
+replication_config = SubResource("config")
+spatial_interest = true
+spatial_position_property = &"position_xz"
+interest_destroy_on_exit = true

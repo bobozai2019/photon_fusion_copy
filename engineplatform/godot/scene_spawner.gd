@@ -1,4 +1,4 @@
-class_name NetcodeSpawner
+class_name NetcodeLegacySpawner
 extends Node
 
 ## Drives one local room and its dynamic scene instances.

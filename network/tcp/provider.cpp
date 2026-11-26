@@ -1,4 +1,5 @@
 #include <netcode/transport_provider.h>
+#include "limits.hpp"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -12,6 +13,7 @@
 #include <netinet/tcp.h>
 #include <poll.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <unistd.h>
 #endif
 
@@ -32,7 +34,8 @@ namespace {
 constexpr size_t header_size = 3;
 constexpr size_t read_chunk = 32 * 1024;
 constexpr size_t peer_io_budget = 128 * 1024;
-constexpr size_t max_peers = 64;
+constexpr size_t write_batch_size = 16;
+constexpr size_t max_peers = netcode::tcp_room_capacity;
 constexpr size_t max_queued_frames = 4096;
 constexpr uint32_t default_queue = 512 * 1024;
 constexpr uint32_t max_queue = 16 * 1024 * 1024;
@@ -42,6 +45,7 @@ constexpr uint32_t lane_max[] = {NC_TRANSPORT_CONTROL_MAX, NC_TRANSPORT_GAME_MAX
 #ifdef _WIN32
 using SocketId = SOCKET;
 using AddressSize = int;
+using WriteBuffer = WSABUF;
 constexpr SocketId bad_socket = INVALID_SOCKET;
 constexpr int refused = WSAECONNREFUSED;
 constexpr int timed_out = WSAETIMEDOUT;
@@ -49,10 +53,19 @@ int socket_error() { return WSAGetLastError(); }
 bool would_block(int error) { return error == WSAEWOULDBLOCK || error == WSAEINPROGRESS; }
 bool interrupted(int error) { return error == WSAEINTR; }
 void release_socket(SocketId fd) { closesocket(fd); }
-constexpr int send_flags = 0;
+WriteBuffer write_buffer(uint8_t *data, size_t size) {
+    return {static_cast<ULONG>(size), reinterpret_cast<char *>(data)};
+}
+int write_buffers(SocketId fd, WriteBuffer *buffers, size_t count) {
+    DWORD written;
+    if (WSASend(fd, buffers, static_cast<DWORD>(count), &written, 0, nullptr, nullptr) == SOCKET_ERROR)
+        return -1;
+    return static_cast<int>(written);
+}
 #else
 using SocketId = int;
 using AddressSize = socklen_t;
+using WriteBuffer = iovec;
 constexpr SocketId bad_socket = -1;
 constexpr int refused = ECONNREFUSED;
 constexpr int timed_out = ETIMEDOUT;
@@ -65,6 +78,13 @@ constexpr int send_flags = MSG_NOSIGNAL;
 #else
 constexpr int send_flags = 0;
 #endif
+WriteBuffer write_buffer(uint8_t *data, size_t size) { return {data, size}; }
+int write_buffers(SocketId fd, WriteBuffer *buffers, size_t count) {
+    msghdr message{};
+    message.msg_iov = buffers;
+    message.msg_iovlen = static_cast<decltype(message.msg_iovlen)>(count);
+    return static_cast<int>(sendmsg(fd, &message, send_flags));
+}
 #endif
 
 struct Network {
@@ -283,29 +303,39 @@ struct nc_transport_instance {
     }
 
     void write_frames(Peer &peer) {
+        std::array<WriteBuffer, write_batch_size> buffers;
         size_t budget = peer_io_budget;
         while (budget && !peer.send_queue.empty()) {
-            auto &frame = peer.send_queue.front();
-            const int amount = static_cast<int>(std::min(budget, frame.wire.size() - frame.offset));
-            const auto sent = ::send(peer.socket.fd, reinterpret_cast<const char *>(frame.wire.data() + frame.offset),
-                                     amount, send_flags);
+            size_t count = 0, offered = 0;
+            for (auto &frame : peer.send_queue) {
+                const size_t amount = std::min(budget - offered, frame.wire.size() - frame.offset);
+                buffers[count++] = write_buffer(frame.wire.data() + frame.offset, amount);
+                offered += amount;
+                if (count == buffers.size() || offered == budget) break;
+            }
+            const int sent = write_buffers(peer.socket.fd, buffers.data(), count);
             if (sent <= 0) {
                 const int error = sent < 0 ? socket_error() : 0;
                 if (sent == 0 || (!would_block(error) && !interrupted(error))) finish(peer, NC_TRANSPORT_CLOSE_IO_ERROR);
                 return;
             }
-            frame.offset += sent;
             budget -= sent;
-            if (frame.offset != frame.wire.size()) continue;
-            const size_t payload_size = frame.wire.size() - header_size;
-            auto &total = stats.lane[frame.lane];
-            auto &local = peer.stats.lane[frame.lane];
-            total.sent_bytes += payload_size;
-            local.sent_bytes += payload_size;
-            total.queued_bytes -= payload_size;
-            local.queued_bytes -= payload_size;
-            peer.queue_size -= frame.wire.size();
-            peer.send_queue.pop_front();
+            for (size_t pending = sent; pending;) {
+                auto &frame = peer.send_queue.front();
+                const size_t written = std::min(pending, frame.wire.size() - frame.offset);
+                frame.offset += written;
+                pending -= written;
+                if (frame.offset != frame.wire.size()) break;
+                const size_t payload_size = frame.wire.size() - header_size;
+                auto &total = stats.lane[frame.lane];
+                auto &local = peer.stats.lane[frame.lane];
+                total.sent_bytes += payload_size;
+                local.sent_bytes += payload_size;
+                total.queued_bytes -= payload_size;
+                local.queued_bytes -= payload_size;
+                peer.queue_size -= frame.wire.size();
+                peer.send_queue.pop_front();
+            }
         }
     }
 

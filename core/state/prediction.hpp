@@ -15,6 +15,9 @@ public:
     struct Frame { Tick sequence; Input input; };
     static constexpr std::size_t capacity = 128;
     bool ready() const { return checkpoint_tick_ != 0; }
+    bool can_advance() const {
+        return ready() && pending_.size() < capacity && issued_ != UINT32_MAX && tick() != UINT32_MAX;
+    }
     const State& state() const { return state_; }
     const auto& pending() const { return pending_; }
     Tick confirmed() const { return confirmed_; }
@@ -26,7 +29,7 @@ public:
     template<class Step>
     bool advance(const Input& input, Step step)
     {
-        if (!ready() || pending_.size() == capacity || issued_ == UINT32_MAX || tick() == UINT32_MAX) return false;
+        if (!can_advance()) return false;
         pending_.push_back({++issued_, input});
         step(state_, input, tick());
         return true;

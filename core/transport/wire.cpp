@@ -99,4 +99,14 @@ bool Reader::read(std::size_t size, Bytes& result)
     return true;
 }
 
+bool Reader::slice(std::size_t size, Reader& result)
+{
+    if (size > remaining_) return false;
+    const Reader part(data_, size);
+    if (size) data_ += size;
+    remaining_ -= size;
+    result = part;
+    return true;
+}
+
 }

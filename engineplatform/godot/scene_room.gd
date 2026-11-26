@@ -159,13 +159,13 @@ func bind_replica(replica:Replica,id:int) -> bool:
     replica.room=weakref(self)
     return true
 
-func spawn(replica:Replica) -> int:
+func spawn(replica:Replica, mode := -1) -> int:
     if not _open or replica==null or (replica.game!=null and replica.game!=game): return 0
     if replica.game==game and replica.reference(): return 0
     var layout:=replica.definition()
     if layout.is_empty() or _actors.get(layout.key,{})!=layout: return 0
     replica.room=weakref(self)
-    var id:=game.spawn(layout.id,replica.sample_fields(),0,_scene_keys.get(replica.get_instance_id(),0),0)
+    var id:=game.spawn(layout.id,replica.sample_fields(),0,_scene_keys.get(replica.get_instance_id(),0),0,mode)
     if id and not bind_replica(replica,id):
         game.destroy_object(id)
         return 0

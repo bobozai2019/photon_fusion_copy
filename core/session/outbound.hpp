@@ -14,6 +14,7 @@ public:
     explicit Outbound(std::unique_ptr<Transport> link);
     bool send(Peer peer, Lane lane, const Bytes& payload) override;
     void send_messages(Peer peer, Lane lane, std::vector<Bytes> messages);
+    bool admit_snapshot(Peer peer);
     void close(Peer peer) override;
     std::vector<Event> poll(TimePoint now) override;
     Traffic traffic() const override;
@@ -41,6 +42,7 @@ private:
         std::deque<Message> queued;
         std::size_t bytes = 0;
         std::optional<TimePoint> close_started;
+        bool blocked = false;
     };
     bool can_queue(const Stream& stream, Lane lane, std::size_t size) const;
     void queue(Stream& stream, Lane lane, Bytes payload);
@@ -55,6 +57,7 @@ private:
     std::map<Peer, Stream> peers_;
     std::size_t bytes_ = 0;
     std::size_t peak_ = 0;
+    std::uint64_t snapshot_backpressure_skips_ = 0;
 };
 
 }

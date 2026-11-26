@@ -1,5 +1,36 @@
 # property-binding · 同引擎属性同步
 
+Godot 的场景组件可从节点属性直接生成下述字段模板。[Godot 属性选择、容量和写权](godot-scene-sync.md#声明属性)
+
+
+## 配置与字段值
+
+`ReplicationLayout` 以稳定字段号标识值。两端使用相同模板版本和字段布局，注册时检查单对象按声明容量计算的最大包长。现行编码共 16 类，原有九类保留编号。[字段编码](../../core/state/value.cpp) · [配置解析](../../core/state/layout.cpp)
+
+| 字段 | 模板写法 | 约定 |
+|---|---|---|
+| 标量 | `float`、`flag`、`int` | 有限单精度数、布尔值、有符号 32 位整数 |
+| 向量、旋转与颜色 | `vec2`、`vec3`、`vec4`、`quat`、`color` | 四维向量、单位四元数和 RGBA 颜色各有独立类型 |
+| 对象引用 | `object_ref` | 本回合的 64 位引用，零表示空。目标可见且已绑定时可解析为本地场景对象 |
+| 文本与二进制 | `string`、`bytes` | 声明字节数上限，字符串使用 UTF-8 |
+| 数组和列表 | `int_array`、`float_array`、`vec2_array`、`int_list` | 声明元素数上限，有序整数列表保留顺序和重复值 |
+| 整数映射 | `int_map` | 声明条目数上限，键和值均为有符号 32 位整数，编码按键排序 |
+
+变长值可以为空。各引擎的挂载组件可以自动采集属性，也可以将状态应用到实际刚体。控制台示例还检查客端引用解析出的对象是否就是场景中的二维刚体。[示例模板](../../../examples/puzzle/components.cfg) · [组件与引用生命周期](game-session.md#玩法字段命名调用与挂载组件) · [双端验收](../../task/gameplay-components/验收/本机.md)
+
+## 字段声明与本地成员
+
+一份模板含 1–64 个字段，字段号必须为非零且严格递增。同一引擎的房主和客人使用相同的模板号、版本、字段号、类型和容量。框架分别提供 Godot、Unity 和 Cocos2d-x SDK。增加字段或改变容量时应同步两端配置。[模板校验](../../core/state/replication.cpp)
+
+| 需要区分的类型 | Godot | Unity | Cocos2d-x |
+|---|---|---|---|
+| 房内对象引用 | 用 `int` 保存句柄；导出模板时将该字段号加入 `reference_fields` | `ulong` | `netcode::ObjectReference` |
+| 整数数组、有序整数列表 | `PackedInt32Array`、`Array[int]` | `int[]`、`LinkedList<int>` | `IntArray`、`IntLinkedList` |
+| 整数表 | `Dictionary[int,int]` | `Dictionary<int,int>` | `IntMap` |
+| 二进制、二维向量数组 | `PackedByteArray`、`PackedVector2Array` | `byte[]`、`Vector2[]` | `Bytes`、`Vector2Array` |
+
+在 Unity 中绑定根或后代组件的公开实例成员：字段须可写，属性须有公开 getter、setter 且不带索引。Godot 的属性路径相对于复制根节点，按模板顺序排列。Cocos2d-x 按相同顺序注册成员或访问器。对象引用保存的是本回合的句柄，使用时再解析到本地节点。[Godot 导出器](../../engineplatform/godot/layout_exporter.gd) · [Unity 挂载组件](../../engineplatform/unity/managed/NetcodeReplica.cs) · [C++ 类型表](../../core/state/value.hpp)
+
 ## 状态布局和差量
 
 模板注册时按字段顺序生成 word 偏移。标量占一个 32 位 word，向量按分量排列，64 位引用先低后高。浮点保留 IEEE 754 位模式。变长字段首 word 存当前长度，后续按声明容量预留固定位置。字符串和字节数组每四字节共用一个 word，尾部补零。集合缩短时清零废弃位置。字符串采用内联定长槽，Fusion Core v3 的字符串堆属于另一种布局。[本项目类型映射](../../core/state/value.cpp) · [Fusion Words 与 Shadow](https://doc.photonengine.com/fusion-core/v3/manual/objects#shadow-buffer) · [Fusion String Heap](https://doc.photonengine.com/fusion-core/v3/manual/string-heap)
@@ -30,9 +61,7 @@ flowchart LR
 
 会话用 `WordStateHello` 和 `WordStateSupported` 协商差量。稀疏记录用 varint 写数量和相对位置，再用 ZigZag varint 写 word 位模式。完整基线、旧 SDK、量化配置及更紧凑的字段编码走字段格式。接收端用模板检查范围、类型和集合尾部，再原子提交快照或写权样本。引擎接口仍消费类型化值。[房主复制](../../core/state/replication.cpp) · [客机上行](../../core/session/object_authority.cpp)
 
-通用会话和车场直连对每条连接分别协商。房主先发送字段格式，收到本局的 `WordStateHello` 后才启用下行 word 差量，客机收到 `WordStateSupported` 后才启用持权上行 word 差量。探测在丢包后重试，换局重新协商。若连接切换量化模式，房主以新版本重发受影响且可见的完整基线。该基线仍按连接确认，迟到的旧投影无法覆盖它。[协商与写权](../../core/session/object_authority.cpp) · [量化切换](../../core/state/replication.cpp)
-
-房主发送 `AuthorityGrant` 时，为该接收方登记授权引用的对象版本。若该版本尚未确认，房主用完整字段刷新并按连接重试。即使两次采样间的值变回原样，或者观察者较晚完成模型协商，公开副本仍能追到授权引用的版本。场景和依赖的可见性条件照常生效。[授权投递](../../core/session/object_authority.cpp) · [基线选择](../../core/state/replication.cpp)
+通用会话和车场直连对每条连接分别协商。房主先发送字段格式，收到本局的 `WordStateHello` 后才启用下行 word 差量，客机收到 `WordStateSupported` 后才启用持权上行 word 差量。探测在丢包后重试，换局重新协商。同一会话中的旧 SDK 可继续走字段格式。Godot 原生房间还要求双方通过原生协议与模板目录握手。若连接切换量化模式，房主以新版本重发受影响且可见的完整基线。该基线仍按连接确认，迟到的旧投影无法覆盖它。[协商与写权](../../core/session/object_authority.cpp) · [Godot 原生兼容边界](godot-scene-sync.md#原生节点接入) · [量化切换](../../core/state/replication.cpp)
 
 ## 首轮行为规格
 
@@ -54,4 +83,4 @@ flowchart LR
 
 **变换与显示**：覆盖 2D 和 3D 的位置、旋转和缩放。房主游戏逻辑推进物理与权威状态。测试分别记录收到的快照值和插值后的显示位置，并验证连续两个快照之间的可见移动。普通浮点字段采用表中直接应用场景。旋转与缩放的编码精度、表现平滑策略待定。首版本地预测留待后续。
 
-**尚待原版回答**：一次有效采集前多次赋值时，B 实际观察到哪些中间值？权威端哪些条件会影响 getter 次数？对应证据见[原版记录](../../research/fusion/findings/property-binding.md)。首轮自研测试的显式时钟只用于验证可分离的阶段。
+原版 Preview 555 的 Shared 双端实验中，权威端在同一脚本回调依次写入 `0.125、0.375、0.875`，代理 setter 只执行一次，收到约 `0.88`。60 与 30 Hz 的稳定物理驱动下，权威端 60 个物理步均读字段 60 次，关闭该字段后为零。自研首轮用显式时钟验收采集、投递、应用三个阶段，自研 f32 按自身编码精度核对。[原版条件与数值](../../research/fusion/findings/client-audit.md)

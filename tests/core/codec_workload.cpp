@@ -26,7 +26,88 @@ double process_ms() {
 #endif
 }
 
+void check_batch_encoding() {
+    SnapshotCodec single, batch, receiver;
+    for (uint32_t tick = 1; tick <= 30; ++tick) {
+        std::vector<Bytes> packets{{}, Bytes(game_payload_limit + 1)};
+        auto short_packet = game_packet(GameMessage::Snapshot, 1, 1);
+        short_packet.u8(57);
+        packets.push_back(short_packet.take());
+        for (uint32_t fragment = 0; fragment < 5; ++fragment) {
+            auto packet = game_packet(GameMessage::Snapshot, 1, 1);
+            for (uint32_t id = 1; id <= 96; ++id) {
+                packet.u32(fragment * 128 + id);
+                packet.u32(tick + id % 3);
+                packet.u32(id * 3562041u);
+            }
+            packets.push_back(packet.take());
+        }
+        auto compressed = packets;
+        batch.encode_batch(compressed, 1, 1);
+        uint32_t latest = 0;
+        for (std::size_t i = 0; i < packets.size(); ++i) {
+            if (single.encode(packets[i], 1, 1) != compressed[i])
+                throw std::runtime_error("batch changed snapshot bytes");
+            if (compressed[i].empty() || compressed[i][0] != uint8_t(GameMessage::CompactSnapshot)) continue;
+            Reader reader(compressed[i]);
+            GameMessage type;
+            Bytes decoded;
+            uint32_t sequence, missing;
+            if (!read_game_header(reader, type, 1, 1) || !receiver.decode(reader, decoded, sequence, missing) ||
+                !std::equal(decoded.begin(), decoded.end(), packets[i].begin() + 17, packets[i].end()))
+                throw std::runtime_error("batch decoder did not recover input");
+            receiver.remember(sequence, std::move(decoded));
+            latest = sequence;
+        }
+        if (!latest) throw std::runtime_error("batch did not exercise the acknowledged dictionary");
+        single.acknowledge(latest);
+        batch.acknowledge(latest);
+        if (tick % 7 == 0) {
+            single.discard(latest);
+            batch.discard(latest);
+        }
+    }
+    if (single.original_bytes != batch.original_bytes || single.encoded_bytes != batch.encoded_bytes)
+        throw std::runtime_error("batch changed codec counters");
+}
+
+void check_receive_dictionary() {
+    auto raw = game_packet(GameMessage::Snapshot, 1, 1);
+    for (uint32_t i = 0; i < 112; ++i) raw.u32(0x20304050u + i % 7);
+    SnapshotCodec sender, receiver;
+    const auto accept = [&](const Bytes& packet) {
+        Reader reader(packet);
+        GameMessage type;
+        Bytes decoded;
+        uint32_t sequence, missing, anchor;
+        if (!read_game_header(reader, type, 1, 1) || type != GameMessage::CompactSnapshot ||
+            !receiver.decode_with_anchor(reader, decoded, sequence, missing, anchor) ||
+            !std::equal(decoded.begin(), decoded.end(), raw.bytes().begin() + 17, raw.bytes().end()))
+            throw std::runtime_error("active dictionary expired during burst");
+        receiver.remember_received(sequence, anchor, std::move(decoded));
+        return sequence;
+    };
+    const auto first = sender.encode(raw.bytes(), 1, 1);
+    const auto anchor = accept(first);
+    sender.acknowledge(anchor);
+    for (int i = 0; i < 32; ++i) {
+        accept(sender.encode(raw.bytes(), 1, 1));
+        if (i == 20) accept(first);
+    }
+    const auto previous = sender.encode(raw.bytes(), 1, 1);
+    sender.discard(anchor);
+    accept(sender.encode(raw.bytes(), 1, 1));
+    Reader reader(previous);
+    GameMessage type;
+    Bytes decoded;
+    uint32_t sequence, missing;
+    if (!read_game_header(reader, type, 1, 1) || receiver.decode(reader, decoded, sequence, missing) || missing != anchor)
+        throw std::runtime_error("old dictionary did not retire after reset");
+}
+
 int main() try {
+    check_batch_encoding();
+    check_receive_dictionary();
     Schemas schemas;
     schemas.add({1, 1, {{1, FieldType::Int}, {2, FieldType::String, 128}, {3, FieldType::IntList, 64}}});
     AuthorityState host(schemas);

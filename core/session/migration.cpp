@@ -359,8 +359,10 @@ void MigratingSession::promote(TimePoint now) {
     auto commit = game_packet(GameMessage::MigrationCommit, room_, round_);
     commit.u32(term_ + 1);
     commit.u32(local_);
-    for (const auto &[peer, id] : ballot_peers_)
+    for (const auto &[peer, id] : ballot_peers_) {
+        prepared_->receive({EventType::Open, peer}, now);
         backup_->send(peer, Lane::Control, commit.bytes());
+    }
     game_.reset();
     primary_ = std::move(backup_);
     game_ = std::move(prepared_);

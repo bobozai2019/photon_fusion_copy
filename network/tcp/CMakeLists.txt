@@ -7,10 +7,11 @@ if(NOT EXISTS "${NETCODE_TRANSPORT_INCLUDE}/netcode/transport_provider.h")
 endif()
 
 file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/provider.cpp" source_hash)
+file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/limits.hpp" limits_hash)
 file(SHA256 "${NETCODE_TRANSPORT_INCLUDE}/netcode/transport_provider.h" api_hash)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS provider.cpp
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS provider.cpp limits.hpp
     "${NETCODE_TRANSPORT_INCLUDE}/netcode/transport_provider.h")
-string(SHA256 build_hash "${source_hash}|${api_hash}|${CMAKE_SYSTEM_NAME}|${CMAKE_CXX_COMPILER_VERSION}")
+string(SHA256 build_hash "${source_hash}|${limits_hash}|${api_hash}|${CMAKE_SYSTEM_NAME}|${CMAKE_CXX_COMPILER_VERSION}")
 string(SUBSTRING "${build_hash}" 0 16 build_id)
 add_library(netcode_transport_tcp MODULE provider.cpp)
 target_compile_features(netcode_transport_tcp PRIVATE cxx_std_17)

@@ -34,6 +34,27 @@ Peer ObjectAuthority::peer_for(PlayerId player) const {
 bool ObjectAuthority::request(ObjectId object) { return send_request(object, false); }
 bool ObjectAuthority::release(ObjectId object) { return send_request(object, true); }
 
+bool ObjectAuthority::request_coordinator(ObjectId id, Tick now)
+{
+    const auto* object = lookup_(id);
+    const auto* current = grant(id);
+    if (local_ != master_ || !round_ || !object || !current || current->writer == master_ ||
+        pending_.count(id) || request_sequence_ == UINT32_MAX || !policies_.count(object->schema)) return false;
+    const auto instance = *mode(id, object->schema);
+    if (master_only(instance)) return false;
+    auto last = last_transfer_.find(id);
+    if (last != last_transfer_.end() && now - last->second < policies_.at(object->schema).cooldown) return false;
+    if (instance == ClaimMode::Dynamic) return assign(id, master_, now);
+    const auto peer = peer_for(current->writer);
+    if (!peer || !claim_peers_.count(peer) || (known_ && !known_(peer, id))) return false;
+    const Claim request{id, master_, current->epoch, ++request_sequence_};
+    auto message = game_packet(GameMessage::ClaimPrompt, room_, round_);
+    encode(message, request);
+    if (!link_.send(peer, Lane::Control, message.bytes())) return false;
+    pending_[id] = {request, now};
+    return true;
+}
+
 bool ObjectAuthority::send_request(ObjectId id, bool relinquish) {
     const auto* object = lookup_(id);
     if (local_ == master_ || !round_ || !claim_supported_ || !object || !policies_.count(object->schema) ||
@@ -92,6 +113,10 @@ void ObjectAuthority::resolve_prediction(ObjectId id, bool granted) {
 }
 
 void ObjectAuthority::finish_claim(const Claim& c, ClaimStatus status) {
+    if (c.requester == master_) {
+        if (result_) result_(c, status);
+        return;
+    }
     const auto peer = peer_for(c.requester);
     if (!peer || !claim_peers_.count(peer))
         return;
@@ -254,7 +279,7 @@ void ObjectAuthority::maintain_claims(Tick now) {
         const auto c = it->second.claim;
         const auto* g = grant(c.object);
         ClaimStatus status;
-        if (!peer_for(c.requester))
+        if (c.requester != master_ && !peer_for(c.requester))
             status = ClaimStatus::Unavailable;
         else if ((g ? g->epoch : 0) != c.epoch)
             status = ClaimStatus::Stale;

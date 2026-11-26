@@ -1,5 +1,6 @@
 #pragma once
 #include "state/value.hpp"
+#include <algorithm>
 #include <godot_cpp/variant/variant.hpp>
 #include <type_traits>
 #include <godot_cpp/variant/typed_array.hpp>
@@ -22,7 +23,12 @@ inline Variant field_value(const netcode::Value& value)
         else if constexpr (std::is_same_v<T,netcode::Color>) return Color(v[0],v[1],v[2],v[3]);
         else if constexpr (std::is_same_v<T,netcode::ObjectReference>) return int64_t(v.value);
         else if constexpr (std::is_same_v<T,netcode::Bytes>) {
-            PackedByteArray a; for (auto n:v) a.push_back(n); return a;
+            PackedByteArray a;
+            if (!v.empty()) {
+                a.resize(v.size());
+                std::copy(v.begin(), v.end(), a.ptrw());
+            }
+            return a;
         } else if constexpr (std::is_same_v<T,netcode::Vector2Array>) {
             PackedVector2Array a; for (auto p:v) a.push_back(Vector2(p[0],p[1])); return a;
         } else if constexpr (std::is_same_v<T,netcode::IntMap>) {

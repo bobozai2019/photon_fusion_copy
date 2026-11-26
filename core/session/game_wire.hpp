@@ -15,15 +15,24 @@ enum class GameMessage : std::uint8_t {
     ModelHello, ModelFrame, ModelInputs, RpcSkip, CodecHello, CompactSnapshot, CodecAck, CodecReset,
     MigrationHello, MigrationPermit, MigrationPulse, MigrationEcho, MigrationChunk, MigrationVote, MigrationCommit,
     WorldExtendedHello, WorldExtendedObjects, MigrationYield, MigrationYieldAck, WorldNamespace, SpawnReferenced,
-    WordStateHello = 121, WordStateSupported, AuthorityStateWords
+    RoomPropertiesHello, RoomPropertiesUpdate, RoomPropertiesSnapshot, SpawnInitialized, DespawnRequested,
+    RoomInterestKeys, WorldNativeReady, NativeRpcRequest, NativeRpcDelivery, NativeRpcReceipt, NativeRpcResult,
+    WordStateHello = 121, WordStateSupported, AuthorityStateWords,
+    AuthorityBatchHello, AuthorityBatchSupported, AuthorityStateBatch, AuthorityAckBatch,
+    RoomAreaRatesSupported, RoomAreaRates
 };
+
+inline void write_game_header(Writer& writer, GameMessage type, RoomId room, RoundId round)
+{
+    writer.u8(static_cast<std::uint8_t>(type));
+    writer.u64(room);
+    writer.u64(round);
+}
 
 inline Writer game_packet(GameMessage type, RoomId room, RoundId round)
 {
     Writer writer;
-    writer.u8(static_cast<std::uint8_t>(type));
-    writer.u64(room);
-    writer.u64(round);
+    write_game_header(writer, type, room, round);
     return writer;
 }
 

@@ -113,6 +113,91 @@ void test_projection_baseline()
           "late quantized projection rolled back the new baseline");
 }
 
+void test_snapshot_staging()
+{
+    constexpr RoomId room = 22;
+    constexpr RoundId round = 1;
+    Schemas schemas;
+    check(schemas.add({1, 1, {{1, FieldType::Float}, {2, FieldType::ByteArray, 8}}}), "staging schema");
+    const auto& schema = *schemas.get(1);
+    ReplicaState guest(schemas);
+    AppliedSnapshot applied;
+    const auto header = [&](ObjectId id, Tick revision, std::uint8_t kind) {
+        Writer out;
+        out.u32(id);
+        out.u32(revision);
+        out.u32(revision);
+        out.u8(kind);
+        out.u16(schema.id);
+        out.u16(schema.version);
+        out.u32(schema_fingerprint(schema));
+        out.u32(1);
+        return out;
+    };
+    const auto record = [&](ObjectId id, Tick revision, std::uint64_t mask, const Values& values) {
+        auto out = header(id, revision, 1); // Live record with a typed field mask.
+        out.u64(mask);
+        for (const auto& value : values) write_value(out, value);
+        return out.take();
+    };
+    const auto packet = [](Tick tick, const Bytes& first, const Bytes& second) {
+        Writer out;
+        out.u32(tick);
+        out.u8(2);
+        out.append(first);
+        out.append(second);
+        return out.take();
+    };
+    const auto apply = [&](const Bytes& bytes) {
+        Reader in(bytes);
+        return guest.apply(in, room, round, applied);
+    };
+    const Values first{1.f, Bytes{1, 2, 3}}, second{2.f, Bytes{4, 5, 6}};
+    const auto baseline = packet(1, record(1, 1, 3, first), record(2, 1, 3, second));
+    check(apply(baseline), "staging baseline");
+    auto incompatible = schema;
+    incompatible.fields.back().limit = 7;
+    Schemas other_schemas;
+    check(other_schemas.add(incompatible), "register a modified copy of the schema");
+    ReplicaState other(other_schemas);
+    AppliedSnapshot rejected;
+    Reader old_signature(baseline);
+    check(!other.apply(old_signature, room, round, rejected) && other.objects().empty(),
+          "a re-registered layout accepted the signature from its original schema");
+    const auto update_first = record(1, 2, 1, {4.f});
+    const auto update_second = record(2, 2, 2, {Bytes{7, 8}});
+    auto truncated = packet(2, update_first, update_second);
+    truncated.pop_back();
+    check(!apply(truncated) && !apply(packet(2, update_first, update_first)) &&
+          guest.objects().at(1).values == first && guest.objects().at(2).values == second &&
+          guest.objects().at(1).revision == 1 && applied.send_tick == 1,
+          "invalid packet replaced staged fields or reported an ACK");
+    check(apply(packet(2, update_second, update_first)) && applied.changed == std::vector<ObjectId>{1, 2} &&
+          guest.objects().at(1).values == Values{4.f, Bytes{1, 2, 3}} &&
+          guest.objects().at(2).values == Values{2.f, Bytes{7, 8}},
+          "reverse-order sparse updates overwrote unrelated fields");
+
+    const auto word_record = [&](ObjectId id, float value) {
+        auto out = header(id, 3, 5); // Live record with one changed word.
+        std::uint32_t word;
+        pack_words(schema.fields[0], value, &word);
+        write_word_varuint(out, 1);
+        write_word_change(out, 0, word);
+        return out.take();
+    };
+    const auto word_first = word_record(1, 8.f);
+    const auto word_second = word_record(2, 9.f);
+    auto invalid_words = packet(3, word_first, word_second);
+    invalid_words.pop_back();
+    check(!apply(invalid_words) && guest.objects().at(1).revision == 2 &&
+          guest.objects().at(1).values == Values{4.f, Bytes{1, 2, 3}} && applied.send_tick == 2,
+          "a malformed later word record committed an earlier record");
+    check(apply(packet(3, word_second, word_first)) && applied.changed == std::vector<ObjectId>{1, 2} &&
+          guest.objects().at(1).values == Values{8.f, Bytes{1, 2, 3}} &&
+          guest.objects().at(2).values == Values{9.f, Bytes{7, 8}},
+          "retry used words from the rejected packet or from the other object");
+}
+
 }
 
 int main()
@@ -120,6 +205,15 @@ int main()
     using namespace netcode;
     test_word_snapshots();
     test_projection_baseline();
+    test_snapshot_staging();
+    const Field bytes_field{1, FieldType::ByteArray, 13};
+    const Value bytes = Bytes{255, 128, 17, 34, 99};
+    Words padded_bytes(word_capacity(bytes_field), UINT32_MAX);
+    pack_words(bytes_field, bytes, padded_bytes.data());
+    Writer byte_packet;
+    write_value(byte_packet, bytes);
+    check(padded_bytes == Words{5, 0x221180ff, 99, 0, 0} && byte_packet.bytes() == Bytes{5, 0, 255, 128, 17, 34, 99},
+          "byte array packing changed little-endian content or tail padding");
     Values rich{1.25f, true, std::int32_t(-17), Vector2{1, 2}, Vector3{1, 2, 3}, Rotation{0, 0, 0, 1},
                 std::string("abc"), IntArray{-1, 7}, FloatArray{-10.5f, 0},
                 Vector4{{1,2,3,4}},Color{{.25f,0,1,1}},ObjectReference{0xfedcba9876543210ull},

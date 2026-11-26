@@ -13,6 +13,7 @@ var game: NetcodeGame
 var object_id := 0
 var body_adapter
 var initialized := false
+var _binding_generation := 0
 var _body_custom:Array=[]
 var _node_paths: Dictionary[NodePath, NodePath] = {}
 var _member_names: Dictionary[NodePath, StringName] = {}
@@ -48,6 +49,7 @@ func bind(session: NetcodeGame, id: int) -> bool:
     return true
 
 func unbind() -> void:
+    _binding_generation += 1
     if game != null:
         game.remove_meta("netcode_replica_%d" % object_id)
         game.unbind_replica(object_id)
@@ -106,6 +108,7 @@ func _write_member(target: Node, path: NodePath, value: Variant) -> void:
 
 func sample_fields() -> Array:
     var fields: Array = []
+    var generation := _binding_generation
     var root := replication_root()
     if root == null: return []
     if _uses_body():
@@ -113,6 +116,7 @@ func sample_fields() -> Array:
         if adapter == null: return []
         fields = adapter.sample(root,teleport_generation,phase)
     for path in field_paths():
+        if not is_instance_valid(root): return []
         var target := root
         if _node_paths.has(path):
             var node_path := _node_paths[path]
@@ -120,6 +124,7 @@ func sample_fields() -> Array:
         else: target = _target(path)
         if target == null: return []
         fields.append(_read_member(target,path))
+        if generation != _binding_generation: return []
     return fields
 
 func _before_apply(_baseline: bool) -> void:
@@ -128,27 +133,42 @@ func _before_apply(_baseline: bool) -> void:
 func _equal_member(_path: NodePath) -> void:
     pass
 
-func _apply_fields(sampled: Array, fields: Array, offset: int, baseline: bool) -> bool:
+func _sample_for_sync() -> Array:
+    return sample_fields()
+
+func _apply_fields(sampled: Array, fields: Array, offset: int, baseline: bool, sample_invalidated := false) -> bool:
     var paths := field_paths()
+    var generation := _binding_generation
     var complete := true
     for i in paths.size():
         var path := paths[i]
         var index := offset + i
-        if not baseline and sampled[index] == fields[index]:
+        var matched: bool = not baseline and sampled[index] == fields[index]
+        if matched and not sample_invalidated:
             _equal_member(path)
             continue
         var target := _target(path)
         if target == null:
             complete = false
             continue
+        # An earlier setter can change a later field after the batch was sampled.
+        if matched:
+            var current: Variant = _read_member(target, path)
+            if generation != _binding_generation or not is_instance_valid(target): return false
+            if current == fields[index]:
+                _equal_member(path)
+                continue
         _write_member(target, path, fields[index])
+        if generation != _binding_generation: return false
+        sample_invalidated = true
     return complete
 
 func _physics_process(_dt: float) -> void:
     if game == null or Engine.is_editor_hint(): return
-    var body := replication_root()
-    var sampled := sample_fields()
-    if sampled.is_empty(): return
+    var generation := _binding_generation
+    var body := replication_root() if body_adapter != null else null
+    var sampled := _sample_for_sync()
+    if sampled.is_empty() or generation != _binding_generation: return
     var change := game.sync_replica(object_id,sampled,body_adapter != null)
     if change.is_empty():
         if body_adapter!=null and not _body_custom.is_empty() and sampled.slice(7)!=_body_custom:
@@ -172,5 +192,7 @@ func _physics_process(_dt: float) -> void:
         phase = fields[6]
         body_adapter.apply(body,fields,change.age)
     var offset := 7 if body_adapter != null else 0
-    initialized = _apply_fields(sampled, fields, offset, change.baseline)
+    var complete := _apply_fields(sampled, fields, offset, change.baseline, body_adapter != null)
+    if generation != _binding_generation: return
+    initialized = complete
     if not initialized: game.unbind_replica(object_id)

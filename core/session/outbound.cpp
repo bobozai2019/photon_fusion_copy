@@ -49,6 +49,7 @@ bool Outbound::send(Peer peer, Lane lane, const Bytes& payload) {
         const Bytes* message = &payload;
         const auto result = link_.send_batch(peer, lane, &message, 1);
         if (result.status != SendStatus::Blocked) return result.accepted == 1;
+        stream.blocked = true;
     }
     if (!can_queue(stream, lane, payload.size())) return false;
     queue(stream, lane, payload);
@@ -79,10 +80,20 @@ void Outbound::send_messages(Peer peer, Lane lane, std::vector<Bytes> messages) 
     }
 }
 
+bool Outbound::admit_snapshot(Peer peer) {
+    if (!backpressure_ || !reliable_ordered(Lane::Game)) return true;
+    const auto found = peers_.find(peer);
+    if (found == peers_.end() || found->second.close_started) return false;
+    if (!found->second.blocked) return true;
+    ++snapshot_backpressure_skips_;
+    return false;
+}
+
 void Outbound::discard(Stream& stream) {
     bytes_ -= stream.bytes;
     stream.bytes = 0;
     stream.queued.clear();
+    stream.blocked = false;
 }
 
 void Outbound::submit(Peer peer, Stream& stream) {
@@ -101,6 +112,7 @@ void Outbound::submit(Peer peer, Stream& stream) {
             stream.bytes -= size;
             stream.queued.pop_front();
         }
+        stream.blocked = result.status == SendStatus::Blocked && !stream.queued.empty();
         if (result.status == SendStatus::Blocked) return;
         if (result.status != SendStatus::Accepted) {
             discard(stream);
@@ -158,6 +170,7 @@ Traffic Outbound::traffic() const {
     auto stats = link_.traffic();
     stats.queued_bytes += bytes_;
     stats.core_peak_queued_bytes = peak_;
+    stats.snapshot_backpressure_skips = snapshot_backpressure_skips_;
     for (const auto& [peer, stream] : peers_) {
         if (stream.queued.empty()) continue;
         const auto age = std::chrono::duration_cast<std::chrono::microseconds>(now_ - stream.queued.front().queued_at);

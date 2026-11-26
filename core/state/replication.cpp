@@ -1,13 +1,16 @@
 #include "state/replication.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cassert>
 #include <cmath>
 #include <set>
 
 namespace netcode {
 namespace {
 
-constexpr std::size_t snapshot_header_size = 17 + 4 + 1;
+constexpr std::size_t game_header_size = 1 + sizeof(RoomId) + sizeof(RoundId);
+constexpr std::size_t snapshot_header_size = game_header_size + sizeof(Tick) + 1;
 constexpr std::size_t max_snapshot_records = 96;
 constexpr std::uint8_t live = 1, removed = 2, hidden = 3, scoped = 4, word_delta = 5, scoped_word_delta = 6;
 
@@ -22,6 +25,24 @@ Tick progress_at(const std::map<ObjectId, Tick>& progress, ObjectId id)
     return it == progress.end() ? 0 : it->second;
 }
 
+bool update_period_elapsed(ObjectId id, Tick now, Tick last_sent, std::uint16_t divisor)
+{
+    // Spread even and odd object cohorts as well as consecutive IDs.
+    const auto mixed = std::uint32_t(id * 0x9e3779b9u);
+    const auto phase = static_cast<Tick>((std::uint64_t(mixed) * divisor) >> 32);
+    const auto offset = now % divisor;
+    const auto since_boundary = offset >= phase ? offset - phase : offset + divisor - phase;
+    // A skipped send step can still publish in the new object's period.
+    return now - last_sent > since_boundary;
+}
+
+bool matches_values(const Schema& schema, const Values& values)
+{
+    return schema.fields.size() == values.size() &&
+        std::equal(schema.fields.begin(), schema.fields.end(), values.begin(), [](Field f, const Value& v) {
+            return valid_value(f, v);
+        });
+}
 }
 
 std::uint32_t schema_fingerprint(const Schema& schema)
@@ -47,6 +68,7 @@ bool Schemas::add(Schema schema)
         previous = field.id;
     }
     schema.layout.initialize(schema.fields);
+    schema.wire_fingerprint = schema_fingerprint(schema);
     return schemas_.emplace(schema.id, std::move(schema)).second;
 }
 
@@ -59,15 +81,13 @@ const Schema* Schemas::get(SchemaId id) const
 bool Schemas::valid(SchemaId id, const Values& values) const
 {
     const auto* schema = get(id);
-    return schema && schema->fields.size() == values.size() &&
-        std::equal(schema->fields.begin(), schema->fields.end(), values.begin(), [](Field f, const Value& v) {
-            return valid_value(f, v);
-        });
+    return schema && matches_values(*schema, values);
 }
 
 void AuthorityState::clear()
 {
     entries_.clear();
+    tombstones_.clear();
     peers_.clear();
     highest_id_ = 0;
     changes_ = 0;
@@ -92,24 +112,41 @@ bool AuthorityState::create(ObjectId id, SchemaId schema, PlayerId owner, const 
         if (bytes > game_payload_limit) return false;
     }
     highest_id_ = id;
-    entries_.emplace(id, Entry{{id, schema, owner, tick, 1, values, scene, dependencies},
-                              *schemas_.get(schema), std::move(distribution)});
+    const auto& entry = entries_.emplace(id, Entry{{id, schema, owner, tick, 1, values, scene, dependencies},
+                                                  *schemas_.get(schema), std::move(distribution)}).first->second;
+    track_dependencies(entry, true);
     for (auto& [peer, progress] : peers_) {
-        progress.baseline[id] = 1;
-        refresh(progress);
+        // Existing objects cannot depend on this new id. Each dependency has
+        // already had its visibility resolved for this peer.
+        const bool visible = matches_interest(entry, progress) &&
+            std::none_of(dependencies.begin(), dependencies.end(),
+                         [&](ObjectId dependency) { return progress.hidden.count(dependency); });
+        if (visible) progress.baseline.emplace(id, 1);
+        else progress.hidden.emplace(id, 1);
     }
     return true;
 }
 
 bool AuthorityState::capture(ObjectId id, const Values& values, Tick tick)
 {
+    return capture_sample(id, values, tick, nullptr);
+}
+
+bool AuthorityState::capture_sample(ObjectId id, const Values& values, Tick tick, const Words* validated_words)
+{
     const auto it = entries_.find(id);
     if (it == entries_.end() || it->second.removed) return false;
     auto& entry = it->second;
     auto& object = entry.object;
-    if (tick < object.sample_tick || !schemas_.valid(object.schema, values)) return false;
+    if (tick < object.sample_tick) return false;
     const auto* schema = schemas_.get(object.schema);
-    schema->layout.pack(schema->fields, values, sampled_words_);
+    if (!schema || !matches_values(*schema, values)) return false;
+    if (validated_words) {
+        if (validated_words->size() != schema->layout.offsets.back()) return false;
+        sampled_words_ = *validated_words;
+    } else {
+        schema->layout.pack(schema->fields, values, sampled_words_);
+    }
     if (!entry.state.stage(sampled_words_)) return true;
     ++changes_;
     ++object.revision;
@@ -124,10 +161,19 @@ bool AuthorityState::destroy(ObjectId id, Tick tick)
     if (it == entries_.end() || it->second.removed || tick < it->second.object.sample_tick) return false;
     auto& entry = it->second;
     entry.removed = true;
+    tombstones_.insert(id);
     ++entry.object.revision;
     entry.object.sample_tick = tick;
-    for (auto& [peer, progress] : peers_) refresh(progress);
+    for (auto& [peer, progress] : peers_) {
+        progress.forget_readiness(id);
+        if (!progress.baseline.count(id) && progress.sent.count(id))
+            progress.pending_exits[id] = entry.object.revision;
+    }
+    track_dependencies(entry, false);
+    if (entry.dependent_count)
+        for (auto& [peer, progress] : peers_) refresh(progress);
     prune();
+    if (on_destroy_) on_destroy_(id);
     return true;
 }
 
@@ -146,11 +192,12 @@ std::vector<ObjectId> AuthorityState::active() const
     return result;
 }
 
-void AuthorityState::attach(Peer peer, bool word_deltas)
+void AuthorityState::attach(Peer peer, bool word_deltas, PlayerId player)
 {
     if (!peer || peers_.count(peer)) return;
     auto& progress = peers_[peer];
     progress.word_deltas = word_deltas;
+    progress.player = player;
     for (const auto& [id, entry] : entries_) {
         if (!entry.removed) progress.baseline[id] = entry.object.revision;
     }
@@ -166,8 +213,16 @@ void AuthorityState::detach(Peer peer)
 bool AuthorityState::known(Peer peer, ObjectId id) const
 {
     const auto it = peers_.find(peer);
-    if (it == peers_.end() || !get(id) || it->second.hidden.count(id)) return false;
-    return progress_at(it->second.ack, id) >= std::max<Tick>(1, progress_at(it->second.reentered, id));
+    if (it == peers_.end()) return false;
+    const auto& receipts = it->second.ack;
+    const auto receipt = receipts.find(id);
+    return receipt != receipts.end() && receipt->second.ready;
+}
+
+bool AuthorityState::subscribes_to(Peer peer, const Distribution& distribution) const
+{
+    auto it = peers_.find(peer);
+    return it != peers_.end() && send_divisor(distribution, it->second);
 }
 
 std::uint16_t AuthorityState::send_divisor(const Entry& entry, const Progress& p) const
@@ -179,7 +234,13 @@ std::uint16_t AuthorityState::send_divisor(const Entry& entry, const Progress& p
         if (parent == entries_.end() || parent->second.removed) return 0;
         source = &parent->second;
     }
-    const auto& group = source->distribution;
+    if (source->distribution.kind == InterestKind::Area && source->spatial_writer && source->spatial_writer == p.player)
+        return source->distribution.send_divisor;
+    return send_divisor(source->distribution, p);
+}
+
+std::uint16_t AuthorityState::send_divisor(const Distribution& group, const Progress& p)
+{
     if (group.kind == InterestKind::Global) return group.send_divisor;
     const auto& subscriptions = group.kind == InterestKind::Area ? p.areas : p.users;
     std::uint16_t rate = 0;
@@ -192,6 +253,54 @@ std::uint16_t AuthorityState::send_divisor(const Entry& entry, const Progress& p
     return rate ? std::max(rate, group.send_divisor) : 0;
 }
 
+bool AuthorityState::matches_interest(const Entry& entry, const Progress& p) const
+{
+    const auto& object = entry.object;
+    return send_divisor(entry, p) && !p.pending_scenes.count(object.scene) &&
+           (!p.scene || !object.scene || p.scene == object.scene) &&
+           (!p.selected || p.selected->count(object.id));
+}
+
+void AuthorityState::adjust_dependents(ObjectId id, bool add)
+{
+    const auto found = entries_.find(id);
+    if (found == entries_.end()) return;
+    auto& count = found->second.dependent_count;
+    if (add) {
+        ++count;
+    } else {
+        assert(count);
+        --count;
+    }
+}
+
+void AuthorityState::track_dependencies(const Entry& entry, bool add)
+{
+    for (const auto id : entry.object.dependencies) adjust_dependents(id, add);
+    if (entry.scope_parent) adjust_dependents(entry.scope_parent, add);
+}
+
+void AuthorityState::update_visibility(Entry& entry, Progress& p, bool visible)
+{
+    auto& o = entry.object;
+    const auto id = o.id;
+    if (visible == !p.hidden.count(id)) return;
+    // A delayed snapshot cannot undo a leave or re-entry.
+    const bool was_sent = p.sent.count(id) != 0;
+    if (was_sent || visible) ++o.revision;
+    if (visible) {
+        p.hidden.erase(id);
+        p.pending_exits.erase(id);
+        p.reentered[id] = o.revision;
+        p.baseline[id] = o.revision;
+    } else {
+        p.forget_readiness(id);
+        p.hidden[id] = o.revision;
+        p.baseline.erase(id);
+        if (was_sent) p.pending_exits[id] = o.revision;
+    }
+}
+
 void AuthorityState::refresh(Progress& p)
 {
     // A newly attached parent can have a higher object ID than its child.
@@ -201,8 +310,7 @@ void AuthorityState::refresh(Progress& p)
     std::vector<ObjectId> visible_objects;
     for (const auto& [id, entry] : entries_) {
         const auto& o = entry.object;
-        if (entry.removed || !send_divisor(entry, p) || p.pending_scenes.count(o.scene) ||
-            (p.scene && o.scene && p.scene != o.scene) || (p.selected && !p.selected->count(id))) continue;
+        if (entry.removed || !matches_interest(entry, p)) continue;
         size_t required = o.dependencies.size() + (entry.scope_parent != 0);
         if (!required) visible_objects.push_back(id);
         else {
@@ -218,21 +326,7 @@ void AuthorityState::refresh(Progress& p)
     }
     const std::set<ObjectId> resolved(visible_objects.begin(), visible_objects.end());
     for (auto& [id, entry] : entries_) {
-        auto& o = entry.object;
-        if (entry.removed) continue;
-        const bool visible = resolved.count(id) != 0;
-        if (visible == !p.hidden.count(id)) continue;
-        // Visibility transitions share the object's monotonic revision space.
-        // Consequently an old datagram cannot undo a leave/re-enter transition.
-        if (p.sent.count(id) || visible) ++o.revision;
-        if (visible) {
-            p.hidden.erase(id);
-            p.reentered[id] = o.revision;
-            p.baseline[id] = o.revision;
-        } else {
-            p.hidden[id] = o.revision;
-            p.baseline.erase(id);
-        }
+        if (!entry.removed) update_visibility(entry, p, resolved.count(id) != 0);
     }
 }
 
@@ -244,6 +338,8 @@ bool AuthorityState::set_scope_parent(ObjectId child, ObjectId parent)
     }
     auto& current = entries_.at(child).scope_parent;
     if (current != parent) {
+        if (current) adjust_dependents(current, false);
+        if (parent) adjust_dependents(parent, true);
         current = parent;
         for (auto& entry : peers_) refresh(entry.second);
     }
@@ -274,8 +370,10 @@ bool AuthorityState::subscribe_rates(Peer peer, InterestKind kind, std::map<std:
     if (it == peers_.end() || (kind != InterestKind::Area && kind != InterestKind::User)) return false;
     auto& current = kind == InterestKind::Area ? it->second.areas : it->second.users;
     if (current != keys) {
+        const bool same_keys = current.size() == keys.size() && std::equal(current.begin(), current.end(), keys.begin(),
+            [](const auto& old, const auto& next) { return old.first == next.first; });
         current = std::move(keys);
-        refresh(it->second);
+        if (!same_keys) refresh(it->second);
     }
     return true;
 }
@@ -284,11 +382,40 @@ bool AuthorityState::set_distribution(ObjectId id, Distribution distribution)
 {
     auto it = entries_.find(id);
     if (it == entries_.end() || it->second.removed || !distribution.send_divisor) return false;
-    auto old = it->second.distribution;
-    it->second.distribution = distribution;
-    if (old.kind != distribution.kind || old.key != distribution.key || old.additional_keys != distribution.additional_keys)
-        for (auto& [peer, progress] : peers_) refresh(progress);
+    auto& entry = it->second;
+    const bool scope_changed = entry.distribution.kind != distribution.kind || entry.distribution.key != distribution.key ||
+        entry.distribution.additional_keys != distribution.additional_keys;
+    entry.distribution = std::move(distribution);
+    if (!scope_changed) return true;
+    for (auto& [peer, progress] : peers_) refresh_entry(entry, progress);
     return true;
+}
+
+void AuthorityState::set_spatial_writer(ObjectId id, PlayerId writer)
+{
+    const auto it = entries_.find(id);
+    if (it == entries_.end() || it->second.removed || it->second.spatial_writer == writer) return;
+    auto& entry = it->second;
+    const auto previous = entry.spatial_writer;
+    entry.spatial_writer = writer;
+    if (entry.distribution.kind != InterestKind::Area) return;
+    for (auto& [_, progress] : peers_)
+        if (progress.player && (progress.player == previous || progress.player == writer))
+            refresh_entry(entry, progress);
+}
+
+void AuthorityState::refresh_entry(Entry& entry, Progress& progress)
+{
+    if (entry.dependent_count) {
+        refresh(progress);
+        return;
+    }
+    const auto parent_visible = [&](ObjectId parent) { return get(parent) && !progress.hidden.count(parent); };
+    const auto& dependencies = entry.object.dependencies;
+    const bool visible = matches_interest(entry, progress) &&
+        (!entry.scope_parent || parent_visible(entry.scope_parent)) &&
+        std::all_of(dependencies.begin(), dependencies.end(), parent_visible);
+    update_visibility(entry, progress, visible);
 }
 
 bool AuthorityState::set_quantum(SchemaId schema, FieldId id, float quantum)
@@ -333,7 +460,7 @@ void AuthorityState::require_baseline(Peer peer, ObjectId id, Tick revision)
 {
     const auto it = peers_.find(peer);
     const auto* object = get(id);
-    if (it == peers_.end() || !object || revision > object->revision || revision <= progress_at(it->second.ack, id)) return;
+    if (it == peers_.end() || !object || revision > object->revision || revision <= it->second.acknowledged(id)) return;
     auto& required = it->second.required_baselines[id];
     required = std::max(required, revision);
 }
@@ -352,7 +479,7 @@ bool AuthorityState::baseline_complete(Peer peer) const
     if (found == peers_.end()) return false;
     const auto& progress = found->second;
     return std::all_of(progress.baseline.begin(), progress.baseline.end(), [&](const auto& record) {
-        return progress_at(progress.ack, record.first) >= record.second;
+        return progress.acknowledged(record.first) >= record.second;
     });
 }
 
@@ -364,7 +491,9 @@ std::vector<Bytes> AuthorityState::packets(Peer peer, RoomId room, RoundId round
     std::uint8_t count = 0;
     const auto flush = [&] {
         if (!count) return;
-        auto packet = game_packet(GameMessage::Snapshot, room, round);
+        Writer packet;
+        packet.reserve(snapshot_header_size + records.bytes().size());
+        write_game_header(packet, GameMessage::Snapshot, room, round);
         packet.u32(send_tick);
         packet.u8(count);
         packet.append(records.bytes());
@@ -372,37 +501,64 @@ std::vector<Bytes> AuthorityState::packets(Peer peer, RoomId room, RoundId round
         records.clear();
         count = 0;
     };
-    for (auto& [id, entry] : entries_) {
+    // For dense interest, a sequential walk avoids a tree lookup per candidate.
+    const bool sparse = progress.baseline.size() + progress.pending_exits.size() <= entries_.size() / 2;
+    auto visible = progress.baseline.cbegin();
+    auto exiting = progress.pending_exits.cbegin();
+    auto next = entries_.begin();
+    auto confirmed = progress.ack.cbegin();
+    while (sparse ? visible != progress.baseline.cend() || exiting != progress.pending_exits.cend()
+                  : next != entries_.end()) {
+        if (sparse) {
+            // The two lists are disjoint. Merge them to preserve snapshot order.
+            const bool use_visible = exiting == progress.pending_exits.cend() ||
+                (visible != progress.baseline.cend() && visible->first < exiting->first);
+            next = entries_.find(use_visible ? (visible++)->first : (exiting++)->first);
+            assert(next != entries_.end());
+        }
+        auto& [id, entry] = *next;
+        if (!sparse) ++next;
         const auto& object = entry.object;
         if (!entry.removed) entry.state.scan(object.revision);
-        const Tick ack = progress_at(progress.ack, id);
-        const bool hide = !entry.removed && progress.hidden.count(id);
-        const Tick revision = hide ? progress.hidden.at(id) : object.revision;
-        if (ack >= revision || (hide && !progress.sent.count(id)) ||
-            (entry.removed && !progress.sent.count(id) && !progress.baseline.count(id))) continue;
-        if (retry_ticks && progress_at(progress.sent, id) == revision &&
-            send_tick - progress_at(progress.last_sent_tick, id) < retry_ticks) continue;
+        Tick ack = 0;
+        if (sparse) {
+            ack = progress.acknowledged(id);
+        } else {
+            while (confirmed != progress.ack.cend() && confirmed->first < id) ++confirmed;
+            if (confirmed != progress.ack.cend() && confirmed->first == id) ack = confirmed->second.revision;
+        }
+        const auto hidden_record = progress.hidden.find(id);
+        const bool hide = !entry.removed && hidden_record != progress.hidden.end();
+        const Tick revision = hide ? hidden_record->second : object.revision;
+        if (ack >= revision) continue;
+        const auto sent = progress.sent.find(id);
+        const bool was_sent = sent != progress.sent.end();
+        if (!was_sent && (hide || (entry.removed && !progress.baseline.count(id)))) continue;
+        const Tick last_sent_tick = was_sent ? sent->second.tick : 0;
+        if (retry_ticks && was_sent && sent->second.revision == revision &&
+            send_tick - last_sent_tick < retry_ticks) continue;
         if (!entry.removed && !hide && !std::all_of(object.dependencies.begin(), object.dependencies.end(),
                 [&](ObjectId dep) { return known(peer, dep); })) continue;
         const bool has_scope = object.scene || !object.dependencies.empty();
         auto kind = entry.removed ? removed : hide ? hidden : has_scope ? scoped : live;
+        const auto* schema = entry.removed || hide ? nullptr : schemas_.get(object.schema);
+        assert(entry.removed || hide || schema);
         data.clear();
-        if (!entry.removed && !hide) {
-            const auto& schema = *schemas_.get(object.schema);
-            const auto& offsets = schema.layout.offsets;
-            std::uint64_t mask = full_mask(schema.fields.size());
+        if (schema) {
+            const auto& offsets = schema->layout.offsets;
+            std::uint64_t mask = full_mask(schema->fields.size());
             delta.clear();
             std::uint32_t dirty_count = 0;
             const auto required_baseline = std::max(progress_at(progress.reentered, id),
                                                      progress_at(progress.required_baselines, id));
             if (ack && ack >= required_baseline) {
                 const auto rate = send_divisor(entry, progress);
-                if (!rate || (rate > 1 && send_tick / rate == progress.last_sent_tick[id] / rate)) continue;
+                if (!rate || (rate > 1 && !update_period_elapsed(id, send_tick, last_sent_tick, rate))) continue;
                 const bool quantized = progress.quantize && has_quantization(object.schema);
                 const bool use_words = progress.word_deltas && !quantized;
                 std::size_t next_word = 0, field_bytes = 8;
                 mask = 0;
-                for (std::size_t field = 0; field < schema.fields.size(); ++field) {
+                for (std::size_t field = 0; field < schema->fields.size(); ++field) {
                     bool dirty = false;
                     for (auto i = offsets[field]; i < offsets[field + 1]; ++i) {
                         if (entry.state.revisions[i] <= ack) continue;
@@ -414,7 +570,7 @@ std::vector<Bytes> AuthorityState::packets(Peer peer, RoomId room, RoundId round
                     }
                     if (!dirty) continue;
                     mask |= std::uint64_t{1} << field;
-                    if (use_words) field_bytes += value_size(schema.fields[field], object.values[field]);
+                    if (use_words) field_bytes += value_size(schema->fields[field], object.values[field]);
                 }
                 if (!mask) continue;
                 if (use_words && delta.bytes().size() + word_varuint_size(dirty_count) <= field_bytes)
@@ -427,7 +583,7 @@ std::vector<Bytes> AuthorityState::packets(Peer peer, RoomId room, RoundId round
                 data.u64(mask);
                 for (std::size_t i = 0; i < object.values.size(); ++i) {
                     if (!(mask & (std::uint64_t{1} << i))) continue;
-                    const auto quantum = progress.quantize ? quantization_.find({object.schema, schema.fields[i].id})
+                    const auto quantum = progress.quantize ? quantization_.find({object.schema, schema->fields[i].id})
                                                             : quantization_.end();
                     if (quantum == quantization_.end()) {
                         write_value(data, object.values[i]);
@@ -451,16 +607,15 @@ std::vector<Bytes> AuthorityState::packets(Peer peer, RoomId room, RoundId round
         record.u32(revision);
         record.u32(object.sample_tick);
         record.u8(kind);
-        if (!entry.removed && !hide) {
+        if (schema) {
             if (has_scope) {
                 record.u32(object.scene);
                 record.u8(static_cast<std::uint8_t>(object.dependencies.size()));
                 for (const auto dep : object.dependencies) record.u32(dep);
             }
-            const auto& schema = *schemas_.get(object.schema);
             record.u16(object.schema);
-            record.u16(schema.version);
-            record.u32(schema_fingerprint(schema));
+            record.u16(schema->version);
+            record.u32(schema->wire_fingerprint);
             record.u32(object.owner);
             record.append(data.bytes());
         }
@@ -468,8 +623,8 @@ std::vector<Bytes> AuthorityState::packets(Peer peer, RoomId room, RoundId round
             count == max_snapshot_records) flush();
         ++count;
         records.append(record.bytes());
-        progress.sent[id] = revision;
-        progress.last_sent_tick[id] = send_tick;
+        if (was_sent) sent->second = {revision, send_tick};
+        else progress.sent.emplace(id, Progress::Sent{revision, send_tick});
     }
     flush();
     return result;
@@ -482,20 +637,29 @@ bool AuthorityState::acknowledge(Peer peer, Reader& payload)
     auto& progress = it->second;
     std::uint8_t count;
     if (!payload.u8(count) || !count || count > max_snapshot_records) return false;
-    std::vector<std::pair<ObjectId, Tick>> acks;
+    struct Ack { ObjectId id; Tick revision; };
+    std::array<Ack, max_snapshot_records> acks;
     for (std::uint8_t i = 0; i < count; ++i) {
-        ObjectId id;
-        Tick revision;
+        auto& [id, revision] = acks[i];
         if (!payload.u32(id) || !payload.u32(revision) || !id || !revision) return false;
-        acks.emplace_back(id, revision);
     }
     if (!payload.done()) return false;
-    for (const auto& [id, revision] : acks) {
-        if (revision <= progress_at(progress.sent, id)) {
-            progress.ack[id] = std::max(revision, progress_at(progress.ack, id));
+    for (std::uint8_t i = 0; i < count; ++i) {
+        const auto [id, revision] = acks[i];
+        const auto sent = progress.sent.find(id);
+        if (sent != progress.sent.end() && revision <= sent->second.revision) {
+            auto& receipt = progress.ack[id];
+            receipt.revision = std::max(revision, receipt.revision);
+            // Leave and destruction clear readiness, and re-entry requires its new baseline.
+            if (!receipt.ready && receipt.revision >= progress_at(progress.reentered, id) &&
+                !progress.hidden.count(id) && get(id))
+                receipt.ready = true;
             const auto baseline = progress.required_baselines.find(id);
             if (baseline != progress.required_baselines.end() && revision >= baseline->second)
                 progress.required_baselines.erase(baseline);
+            const auto exit = progress.pending_exits.find(id);
+            if (exit != progress.pending_exits.end() && revision >= exit->second)
+                progress.pending_exits.erase(exit);
         }
     }
     prune();
@@ -504,28 +668,31 @@ bool AuthorityState::acknowledge(Peer peer, Reader& payload)
 
 void AuthorityState::prune()
 {
-    for (auto it = entries_.begin(); it != entries_.end();) {
-        const auto id = it->first;
-        const bool pending = it->second.removed && std::any_of(peers_.begin(), peers_.end(),
+    for (auto it = tombstones_.begin(); it != tombstones_.end();) {
+        const auto id = *it;
+        const auto entry = entries_.find(id);
+        const auto revision = entry->second.object.revision;
+        const bool pending = std::any_of(peers_.begin(), peers_.end(),
             [&](const auto& pair) {
                 const auto& progress = pair.second;
                 return (progress.sent.count(id) || progress.baseline.count(id)) &&
-                       progress_at(progress.ack, id) < it->second.object.revision;
+                       progress.acknowledged(id) < revision;
             });
-        if (!it->second.removed || pending) {
+        if (pending) {
             ++it;
             continue;
         }
         for (auto& [peer, progress] : peers_) {
             progress.baseline.erase(id);
             progress.sent.erase(id);
-            progress.last_sent_tick.erase(id);
             progress.ack.erase(id);
             progress.hidden.erase(id);
             progress.reentered.erase(id);
+            progress.pending_exits.erase(id);
             progress.required_baselines.erase(id);
         }
-        it = entries_.erase(it);
+        entries_.erase(entry);
+        it = tombstones_.erase(it);
     }
 }
 
@@ -534,6 +701,8 @@ void ReplicaState::clear()
     objects_.clear();
     waiting_for_dependencies_.clear();
     words_.clear();
+    staged_words_.clear();
+    staged_values_.clear();
     loading_.clear();
     removed_.clear();
     hidden_.clear();
@@ -545,26 +714,49 @@ bool ReplicaState::apply(Reader& payload, RoomId room, RoundId round, AppliedSna
     std::uint8_t count;
     if (!payload.u32(send_tick) || !send_tick || !payload.u8(count) || !count ||
         count > max_snapshot_records) return false;
-    struct Update { Object object; std::uint8_t kind; bool changed; Words words; };
+    struct Update {
+        Object object;
+        Words baseline_words;
+        std::size_t word_offset = 0;
+        Object* prior = nullptr;
+        Words* prior_words = nullptr;
+        std::uint64_t mask = 0;
+        std::uint8_t kind = 0;
+        bool changed = false;
+        bool was_waiting = false;
+    };
     std::vector<Update> updates;
-    std::set<ObjectId> seen;
+    updates.reserve(count);
+    auto& changed_values = staged_values_;
+    struct ResetValues {
+        Values& values;
+        ~ResetValues() { values.clear(); }
+    } reset_values{changed_values};
+    changed_values.reserve(count);
+    staged_words_.clear();
+    std::array<ObjectId, max_snapshot_records> ids;
+    std::size_t changed_count = 0;
+    bool ordered = true;
     for (std::uint8_t i = 0; i < count; ++i) {
-        Object o;
-        std::uint8_t kind;
+        auto& update = updates.emplace_back();
+        auto& o = update.object;
+        auto& kind = update.kind;
         if (!payload.u32(o.id) || !payload.u32(o.revision) || !payload.u32(o.sample_tick) ||
-            !payload.u8(kind) || !o.id || !o.revision || !o.sample_tick ||
-            !seen.insert(o.id).second) return false;
-        const Object* prior = nullptr;
-        if (const auto it = objects_.find(o.id); it != objects_.end()) prior = &it->second;
-        else if (const auto it = waiting_for_dependencies_.find(o.id); it != waiting_for_dependencies_.end())
-            prior = &it->second;
+            !payload.u8(kind) || !o.id || !o.revision || !o.sample_tick) return false;
+        ids[i] = o.id;
+        ordered &= !i || ids[i - 1] < o.id;
+        if (const auto it = objects_.find(o.id); it != objects_.end()) update.prior = &it->second;
+        else if (const auto it = waiting_for_dependencies_.find(o.id); it != waiting_for_dependencies_.end()) {
+            update.prior = &it->second;
+            update.was_waiting = true;
+        }
+        const auto* prior = update.prior;
         const Tick tombstone = progress_at(removed_, o.id);
         const Tick known = prior ? prior->revision : std::max(tombstone, progress_at(hidden_, o.id));
         const bool newer = o.revision > known;
-        if (kind == removed || kind == hidden) {
-            updates.push_back({std::move(o), kind, newer, {}});
-            continue;
-        }
+        update.changed = newer;
+        changed_count += newer;
+        if (kind == removed || kind == hidden) continue;
         const bool delta = kind == word_delta || kind == scoped_word_delta;
         if (kind == scoped || kind == scoped_word_delta) {
             std::uint8_t deps;
@@ -582,26 +774,30 @@ bool ReplicaState::apply(Reader& payload, RoomId room, RoundId round, AppliedSna
         if ((!delta && kind != live && kind != scoped) || !payload.u16(o.schema) || !payload.u16(version) ||
             !payload.u32(fingerprint) || !payload.u32(o.owner)) return false;
         const auto* schema = schemas_.get(o.schema);
-        if (!schema || schema->version != version || schema_fingerprint(*schema) != fingerprint) return false;
+        if (!schema || schema->version != version || schema->wire_fingerprint != fingerprint) return false;
         if (newer && tombstone) return false;
         if (prior) {
             if (o.schema != prior->schema || o.owner != prior->owner ||
                 o.scene != prior->scene || o.dependencies != prior->dependencies) return false;
         }
-        Words words;
+        std::uint32_t* words = nullptr;
         const auto& offsets = schema->layout.offsets;
         if (newer) {
             if (prior) {
-                words = words_.at(o.id);
-                o.values = prior->values;
+                update.prior_words = &words_.at(o.id);
+                // Offsets survive buffer growth during validation of later records.
+                update.word_offset = staged_words_.size();
+                staged_words_.insert(staged_words_.end(), update.prior_words->begin(), update.prior_words->end());
+                words = staged_words_.data() + update.word_offset;
             } else {
-                words.resize(offsets.back());
+                update.baseline_words.resize(offsets.back());
+                words = update.baseline_words.data();
                 o.values.resize(schema->fields.size());
             }
         }
-        std::uint64_t mask = 0;
+        auto& mask = update.mask;
         if (delta) {
-            if ((newer && !prior) || !read_word_changes(payload, schema->layout, newer ? &words : nullptr, mask)) return false;
+            if ((newer && !prior) || !read_word_changes_into(payload, schema->layout, words, mask)) return false;
         } else {
             const auto full = full_mask(schema->fields.size());
             if (!payload.u64(mask) || !mask || (mask & ~full) || (newer && !prior && mask != full)) return false;
@@ -609,23 +805,33 @@ bool ReplicaState::apply(Reader& payload, RoomId room, RoundId round, AppliedSna
         for (std::size_t index = 0; index < schema->fields.size(); ++index) {
             if (!(mask & (std::uint64_t{1} << index))) continue;
             const auto field = schema->fields[index];
+            Value ignored;
+            Value* value = &ignored;
+            if (newer) value = prior ? &changed_values.emplace_back() : &o.values[index];
             if (delta) {
-                if (!unpack_words(field, words.data() + offsets[index], o.values[index])) return false;
+                if (!unpack_words(field, words + offsets[index], *value)) return false;
             } else {
-                Value ignored;
-                auto& value = newer ? o.values[index] : ignored;
-                if (!read_value(payload, field, value)) return false;
-                if (newer) pack_words(field, value, words.data() + offsets[index]);
+                if (!read_value(payload, field, *value)) return false;
+                if (newer) pack_words(field, *value, words + offsets[index]);
             }
         }
-        updates.push_back({std::move(o), kind, newer, std::move(words)});
     }
     if (!payload.done()) return false;
+    if (!ordered) {
+        const auto end = ids.begin() + count;
+        std::sort(ids.begin(), end);
+        if (std::adjacent_find(ids.begin(), end) != end) return false;
+    }
     result = {};
     result.send_tick = send_tick;
-    auto ack = game_packet(GameMessage::StateAck, room, round);
+    result.changed.reserve(changed_count);
+    Writer ack;
+    ack.reserve(game_header_size + sizeof(count) + count * (sizeof(ObjectId) + sizeof(Tick)));
+    write_game_header(ack, GameMessage::StateAck, room, round);
     ack.u8(count);
     std::set<ObjectId> fresh;
+    bool lost_ready = false;
+    auto value = changed_values.begin();
     for (auto& update : updates) {
         const auto id = update.object.id;
         ack.u32(id);
@@ -640,20 +846,39 @@ bool ReplicaState::apply(Reader& payload, RoomId room, RoundId round, AppliedSna
                 hidden_[id] = update.object.revision;
                 result.hidden.push_back(id);
             }
-            objects_.erase(id);
+            lost_ready |= objects_.erase(id) != 0;
             waiting_for_dependencies_.erase(id);
             words_.erase(id);
         } else {
-            if (!objects_.count(id)) fresh.insert(id);
             hidden_.erase(id);
-            objects_[id] = std::move(update.object);
-            waiting_for_dependencies_.erase(id);
-            words_[id] = std::move(update.words);
+            if (auto* prior = update.prior) {
+                // The entire packet is valid. Retain the untouched typed fields.
+                for (std::size_t index = 0; index < prior->values.size(); ++index)
+                    if (update.mask & (std::uint64_t{1} << index)) prior->values[index] = std::move(*value++);
+                prior->revision = update.object.revision;
+                prior->sample_tick = update.object.sample_tick;
+                std::copy_n(staged_words_.data() + update.word_offset, update.prior_words->size(),
+                            update.prior_words->data());
+                if (update.was_waiting) {
+                    fresh.insert(id);
+                    objects_.insert(waiting_for_dependencies_.extract(id));
+                }
+            } else {
+                fresh.insert(id);
+                objects_[id] = std::move(update.object);
+                words_[id] = std::move(update.baseline_words);
+            }
         }
         result.changed.push_back(id);
     }
+    assert(value == changed_values.end());
     result.ack = ack.take();
-    resolve_dependencies(result, std::move(fresh));
+    if (lost_ready || !fresh.empty()) {
+        resolve_dependencies(result, std::move(fresh));
+    } else if (!ordered) {
+        // Updates to ready objects cannot change their validated scene or dependencies.
+        std::sort(result.changed.begin(), result.changed.end());
+    }
     return true;
 }
 

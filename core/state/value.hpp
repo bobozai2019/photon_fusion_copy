@@ -69,6 +69,9 @@ std::size_t word_varuint_size(std::uint32_t value);
 void write_word_change(Writer& out, std::uint32_t skip, std::uint32_t value);
 bool read_word_changes(Reader& in, const WordLayout& layout, Words* words, std::uint64_t& changed,
                        bool allow_empty = false);
+// The destination holds layout.offsets.back() words. Null validates the stream only.
+bool read_word_changes_into(Reader& in, const WordLayout& layout, std::uint32_t* words, std::uint64_t& changed,
+                            bool allow_empty = false);
 inline bool valid_value(FieldType type, const Value& value) { return valid_value(Field{0, type}, value); }
 inline bool read_value(Reader& in, FieldType type, Value& value) { return read_value(in, Field{0, type}, value); }
 

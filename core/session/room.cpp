@@ -8,6 +8,7 @@ namespace netcode {
 namespace {
 
 constexpr std::uint8_t version = 1;
+constexpr auto join_timeout = std::chrono::seconds(8);
 enum class Control : std::uint8_t {
     Join = 1, Resume, Entered, Seats, RoundEnded, RoomEnded, Rejected, Roster, ChatInput, ChatMessage, JoinExtended
 };
@@ -124,6 +125,14 @@ bool RoomHost::set_player_ttl(std::optional<uint32_t> ms)
 
 std::vector<PlayerId> RoomHost::expire(TimePoint now)
 {
+    for (auto it = joining_.begin(); it != joining_.end();) {
+        if (now < it->second) {
+            ++it;
+            continue;
+        }
+        transport_.close(it->first);
+        it = joining_.erase(it);
+    }
     std::vector<PlayerId> removed;
     if (!options_.player_ttl_ms) return removed;
     for (auto it = members_.begin(); it != members_.end();) {
@@ -140,7 +149,13 @@ std::vector<PlayerId> RoomHost::expire(TimePoint now)
 void RoomHost::receive(const Event& event, TimePoint now)
 {
     expire(now);
+    if (event.type == EventType::Open) {
+        if (phase_ == RoomPhase::Ended) transport_.close(event.peer);
+        else if (!member(event.peer)) joining_.try_emplace(event.peer, now + join_timeout);
+        return;
+    }
     if (event.type == EventType::Closed) {
+        joining_.erase(event.peer);
         const auto* joined = member(event.peer);
         if (!joined) return;
         const auto id = joined->id;
@@ -166,6 +181,10 @@ void RoomHost::receive(const Event& event, TimePoint now)
         if (type != Control::ChatInput) return reject(event.peer, Reject::Protocol);
         std::string text;
         if (phase_ == RoomPhase::Waiting && read_chat(r, text)) broadcast_chat(joined->id, std::move(text));
+        return;
+    }
+    if (!joining_.erase(event.peer)) {
+        transport_.close(event.peer);
         return;
     }
     switch (type) {
@@ -216,6 +235,7 @@ void RoomHost::resume(Peer peer, Reader& reader)
 
 void RoomHost::reject(Peer peer, Reject reason)
 {
+    joining_.erase(peer);
     auto w = control(Control::Rejected);
     w.u8(static_cast<std::uint8_t>(reason));
     transport_.send(peer, Lane::Control, w.bytes());
@@ -316,6 +336,8 @@ void RoomHost::end_room()
 {
     if (phase_ == RoomPhase::Ended) return;
     phase_ = RoomPhase::Ended;
+    for (const auto& [peer, _] : joining_) transport_.close(peer);
+    joining_.clear();
     auto w = control(Control::RoomEnded);
     w.u64(room_);
     for (const auto& [id, member] : members_) {

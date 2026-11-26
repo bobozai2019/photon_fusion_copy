@@ -10,7 +10,7 @@ struct CheckpointHeader {
     PlayerId coordinator = 0;
     Tick tick = 0;
     std::uint32_t step_ms = 0;
-    bool has_seat_ttl = false, has_namespace = false;
+    bool has_seat_ttl = false, has_namespace = false, has_native_state = false;
 };
 class CheckpointCodec {
   public:

@@ -1,4 +1,5 @@
 #include "host/game.hpp"
+#include "tcp/limits.hpp"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -35,6 +36,9 @@ ProviderGame open_provider_game(const ProviderConfig& config, std::string_view e
                                 const ReplicationLayout& layout, const void* anchor) {
     if (config.id.empty()) throw std::invalid_argument("A transport provider ID is required");
     if (options.host && options.resume) throw std::invalid_argument("A host cannot use a guest resume ticket");
+    if (options.host && config.id == "tcp" && options.admission.capacity > tcp_room_capacity)
+        throw std::invalid_argument("The TCP provider supports up to " + std::to_string(tcp_room_capacity) +
+                                    " players including the host");
     auto path = config.module;
     if (path.empty() && config.id == "tcp") {
 #ifdef _WIN32

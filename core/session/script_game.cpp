@@ -73,9 +73,11 @@ void ScriptGame::configure(GameSession& game) {
             events_.push_back({ScriptEventKind::Hidden, id});
         for (auto id : s.destroyed)
             events_.push_back({ScriptEventKind::Destroyed, id});
-        for (auto id : s.changed)
-            if (game.object(id))
-                events_.push_back({ScriptEventKind::Changed, id});
+        if (snapshot_change_events_) {
+            for (auto id : s.changed)
+                if (game.object(id))
+                    events_.push_back({ScriptEventKind::Changed, id});
+        }
     };
     game.on_grant = [this](const ObjectGrant &g) {
         events_.push_back({ScriptEventKind::Grant, g.object, g.writer, g.epoch});
@@ -196,93 +198,150 @@ bool ScriptGame::model(SchemaId schema, std::vector<FieldId> ids, ClaimMode mode
         policy.destroy = [&game](ObjectId id,Tick){game.world().destroy(id);};
         return game.writers().allow_requests(schema,std::move(policy));
     })) return false;
-    const auto &all = schemas_.get(schema)->fields;
-    for (auto id : ids)
-        writable_[schema].push_back(
-            *std::find_if(all.begin(), all.end(), [id](Field f) { return f.id == id; }));
+    const auto& fields = schemas_.get(schema)->fields;
+    auto& layout = write_layouts_[schema];
+    // Schema fields and authority model ids are both validated in ascending order.
+    auto next = ids.begin();
+    for (std::size_t index = 0; index < fields.size(); ++index) {
+        if (next != ids.end() && *next == fields[index].id) {
+            layout.fields.push_back(fields[index]);
+            layout.writable_indices.push_back(index);
+            ++next;
+        } else {
+            layout.read_only_indices.push_back(index);
+        }
+    }
     return true;
 }
 int ScriptGame::sync_replica(ObjectId id,const Values& sample,Values& applied,bool forecast) {
     applied.clear();
     auto* g=active();
     auto* obj=g ? g->object(id) : nullptr;
-    if (!obj || !g->round()) { replicas_.erase(id); return 0; }
-    if (!schemas_.valid(obj->schema,sample)) return 0;
-    auto writer=g->writers().writer(id);
-    auto* grant=g->writers().grant(id);
-    auto epoch=grant ? grant->epoch : 0;
-    auto it=replicas_.find(id);
-    if (it==replicas_.end() || it->second.round!=g->round() || it->second.writer!=writer || it->second.epoch!=epoch) {
-        auto baseline=g->writers().presentation(*obj).values;
-        replicas_[id]={g->round(),writer,epoch,baseline};
-        applied=std::move(baseline);
-        return 2;
-    }
-    it->second.received_revision.reset();
-    auto& previous=it->second.previous;
-    if (g->local()!=writer) {
-        auto next=g->writers().presentation(*obj).values;
-        if (next==previous && (forecast || next==sample)) return 0;
-        applied=next;
-        previous=std::move(next);
+    const auto round = obj ? g->round() : 0;
+    if (!round) { replicas_.erase(id); return 0; }
+    auto& authority = g->writers();
+    const auto* grant = authority.grant(id);
+    const auto writer = grant ? grant->writer : authority.default_writer();
+    const auto local = g->local();
+    const auto epoch = grant ? grant->epoch : 0;
+    const auto it = replicas_.find(id);
+    const bool needs_baseline = it == replicas_.end() || it->second.round != round ||
+                               it->second.writer != writer || it->second.epoch != epoch;
+    if (needs_baseline || local != writer) {
+        if (!schemas_.valid(obj->schema, sample)) return 0;
+        auto displayed = authority.presentation(*obj).values;
+        if (needs_baseline) {
+            replicas_[id] = {round, writer, epoch, displayed};
+            applied = std::move(displayed);
+            return 2;
+        }
+        auto& cursor = it->second;
+        cursor.received_revision.reset();
+        if (displayed == cursor.previous && (forecast || displayed == sample)) return 0;
+        applied = displayed;
+        cursor.previous = std::move(displayed);
         return 1;
     }
-    Values next=sample;
-    if (!g->host()) {
-        const auto mask=writable_.find(obj->schema);
-        if (mask==writable_.end()) return 0;
-        const auto& fields=schemas_.get(obj->schema)->fields;
-        for (size_t i=0;i<fields.size();++i) {
-            if (std::none_of(mask->second.begin(),mask->second.end(),[&](Field f){return f.id==fields[i].id;}))
-                next[i]=obj->values[i];
+
+    auto& cursor = it->second;
+    if (g->host()) {
+        // Capture validates the layout and sample. The writer and cursor were
+        // already resolved here, with no callbacks before the capture.
+        if (sample != cursor.previous) {
+            if (!g->authority().capture(id, sample, g->tick())) return 0;
+            cursor.previous = sample;
         }
+        cursor.received_revision.reset();
+        return 0;
     }
-    if (next!=previous && !submit_fields(id,next)) return 0;
-    if (next!=sample) applied=next;
-    previous=std::move(next);
+    const auto known = write_layouts_.find(obj->schema);
+    if (known == write_layouts_.end()) return 0;
+    const auto& layout = known->second;
+    if (layout.read_only_indices.empty()) {
+        // The authority model matches the entire schema for this layout.
+        if (sample != cursor.previous) {
+            if (!grant || !authority.submit_scene_sample(id, epoch, sample)) return 0;
+            cursor.previous = sample;
+        }
+        cursor.received_revision.reset();
+        return 0;
+    }
+    if (!schemas_.valid(obj->schema, sample)) return 0;
+    cursor.received_revision.reset();
+    Values next = sample;
+    for (const auto i : layout.read_only_indices) next[i] = obj->values[i];
+    if (next != cursor.previous && !submit_fields(id, next)) return 0;
+    if (next != sample) applied = next;
+    cursor.previous = std::move(next);
     return applied.empty() ? 0 : 1;
 }
 int ScriptGame::receive_replica(ObjectId id, Values& applied, std::uint64_t& mask) {
     applied.clear();
-    mask = 0;
+    const auto update = receive_replica_view(id);
+    mask = update.mask;
+    if (!update.values) return 0;
+    if (update.baseline) {
+        applied = *update.values;
+        return 2;
+    }
+    for (std::size_t i = 0; i < update.values->size(); ++i) {
+        if (mask & (std::uint64_t{1} << i)) applied.push_back((*update.values)[i]);
+    }
+    return 1;
+}
+
+ScriptGame::ReplicaUpdateView ScriptGame::receive_replica_view(ObjectId id) {
+    return receive_replica_view(id, false);
+}
+
+ScriptGame::ReplicaUpdateView ScriptGame::receive_native_replica_view(ObjectId id) {
+    return receive_replica_view(id, true);
+}
+
+ScriptGame::ReplicaUpdateView ScriptGame::receive_replica_view(ObjectId id, bool check_pending_creator) {
     auto* game = active();
+    if (game && check_pending_creator) {
+        const auto* identity = game->world().identity(id);
+        if (identity && identity->grant_creator)
+            return {nullptr, 0, false, ReplicaRole::PendingCreator};
+    }
     const auto* object = game ? game->object(id) : nullptr;
-    if (!object || !game->round()) {
+    const auto round = object ? game->round() : 0;
+    if (!round) {
         replicas_.erase(id);
-        return 0;
+        return {};
     }
     auto& authority = game->writers();
     const auto* grant = authority.grant(id);
-    const auto writer = grant ? grant->writer : authority.writer(id);
-    if (writer == game->local()) return 0;
+    const auto writer = grant ? grant->writer : authority.default_writer();
+    if (writer == game->local()) return {nullptr, 0, false, ReplicaRole::Writer};
     const auto epoch = grant ? grant->epoch : 0;
     auto it = replicas_.find(id);
-    const bool baseline = it == replicas_.end() || it->second.round != game->round() ||
+    const bool baseline = it == replicas_.end() || it->second.round != round ||
                           it->second.writer != writer || it->second.epoch != epoch;
     // A pending grant can change the presented value without a new snapshot revision.
-    const bool canonical = game->host() || (authority.presentation_writer(id) != game->local() &&
+    const bool canonical = game->host() || (!authority.has_predicted_claim(id) &&
                           (!grant || object->revision >= grant->baseline_revision));
-    if (!baseline && canonical && it->second.received_revision == object->revision) return 0;
+    if (!baseline && canonical && it->second.received_revision == object->revision) return {};
 
     std::optional<Object> presented;
     if (!canonical) presented = authority.presentation(*object);
     const auto& fields = presented ? presented->values : object->values;
     const auto revision = canonical ? std::optional<Tick>(object->revision) : std::nullopt;
+    std::uint64_t mask = 0;
     if (baseline) {
         for (std::size_t i = 0; i < fields.size(); ++i) mask |= std::uint64_t{1} << i;
-        replicas_[id] = {game->round(), writer, epoch, fields, revision};
-        applied = fields;
-        return 2;
+        const auto inserted = replicas_.insert_or_assign(id, ReplicaCursor{round, writer, epoch, fields, revision});
+        return {&inserted.first->second.previous, mask, true};
     }
     auto& cursor = it->second;
     cursor.received_revision = revision;
     for (std::size_t i = 0; i < fields.size(); ++i) {
         if (fields[i] == cursor.previous[i]) continue;
         mask |= std::uint64_t{1} << i;
-        applied.push_back(fields[i]);
         cursor.previous[i] = fields[i];
     }
-    return mask ? 1 : 0;
+    return mask ? ReplicaUpdateView{&cursor.previous, mask, false} : ReplicaUpdateView{};
 }
 
 bool ScriptGame::submit_fields(ObjectId id,const Values& full) {
@@ -290,14 +349,12 @@ bool ScriptGame::submit_fields(ObjectId id,const Values& full) {
     const auto* obj=session().object(id);
     if (!obj || !schemas_.valid(obj->schema,full)) return false;
     if (session().host()) return submit(id,full);
-    auto it=writable_.find(obj->schema);
-    if (it==writable_.end()) return false;
+    const auto it = write_layouts_.find(obj->schema);
+    if (it == write_layouts_.end()) return false;
+    if (it->second.read_only_indices.empty()) return submit(id, full);
     Values subset;
-    const auto& fields=schemas_.get(obj->schema)->fields;
-    for (const auto& f:it->second) {
-        auto pos=std::lower_bound(fields.begin(),fields.end(),f.id,[](Field a,FieldId b){return a.id<b;});
-        subset.push_back(full[pos-fields.begin()]);
-    }
+    subset.reserve(it->second.writable_indices.size());
+    for (const auto index : it->second.writable_indices) subset.push_back(full[index]);
     return submit(id,subset);
 }
 bool ScriptGame::submit(ObjectId id, const Values &values) {
@@ -315,7 +372,7 @@ bool ScriptGame::submit(ObjectId id, const Values &values) {
     if (writers.writer(id) != session().local())
         return writers.submit_predicted(id, 0, values);
     auto *grant = writers.grant(id);
-    return grant && writers.submit(id, grant->epoch, 0, values);
+    return grant && writers.submit_scene_sample(id, grant->epoch, values);
 }
 bool ScriptGame::read(ObjectId id, bool presentation, Values &out) {
     auto *obj = session().object(id);
@@ -326,9 +383,10 @@ bool ScriptGame::read(ObjectId id, bool presentation, Values &out) {
 }
 bool ScriptGame::decode(SchemaId schema, bool model_only, const Bytes &encoded, Values &values) const {
     const auto *def = schemas_.get(schema);
-    if (!def || (model_only && !writable_.count(schema)))
+    const auto layout = write_layouts_.find(schema);
+    if (!def || (model_only && layout == write_layouts_.end()))
         return false;
-    const auto &fields = model_only ? writable_.at(schema) : def->fields;
+    const auto& fields = model_only ? layout->second.fields : def->fields;
     Reader reader(encoded);
     Values next;
     for (const auto field : fields) {

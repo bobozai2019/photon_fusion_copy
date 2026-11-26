@@ -36,6 +36,7 @@ struct Traffic {
     std::size_t queued_bytes = 0, peak_queued_bytes = 0;
     std::size_t core_peak_queued_bytes = 0;
     std::uint64_t oldest_queued_us = 0;
+    std::uint64_t snapshot_backpressure_skips = 0;
 };
 
 enum class SendStatus { Accepted, Blocked, Closed, Invalid, Failed };

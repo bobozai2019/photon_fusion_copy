@@ -34,6 +34,7 @@ void partition(bool majority) {
     Schemas schemas;
     schemas.add({1, 1, {{1, FieldType::Int}}});
     schemas.add({2, 1, {{1, FieldType::Int}}});
+    schemas.add({3, 1, {{1, FieldType::Int}}});
     auto configure = [](GameSession& game) {
         game.writers().register_model(1, 1, {1});
         game.writers().allow_requests(1, {ClaimMode::GameGlobal});
@@ -63,6 +64,10 @@ void partition(bool majority) {
     auto object = original.active()->world().spawn(1, 1, {int32_t(123)}, {0, 431});
     const auto avatar = original.active()->world().spawn(2, 1, {int32_t(1)});
     if (!avatar) throw std::runtime_error("old coordinator avatar missing before migration");
+    const auto child = original.active()->world().spawn(3, 1, {int32_t(3)}, {0, 433});
+    const auto parent = original.active()->world().spawn(3, 1, {int32_t(4)}, {0, 434});
+    if (!child || !parent || !original.active()->world().reparent(child, parent))
+        throw std::runtime_error("could not attach earlier child to later parent");
     for (int i = 0; i < 45; ++i)
         step(true, true);
     if (original.active()->world().spawn(1, 1, {int32_t(0)}) ||
@@ -93,6 +98,15 @@ void partition(bool majority) {
             !guest->object(object) || std::get<int32_t>(guest->object(object)->values[0]) != 123 ||
             guest->writers().writer(object) != 2 || host->object(avatar) || guest->object(avatar))
             throw std::runtime_error("majority failed to continue");
+        if (!guest->object(child) || !guest->object(parent) ||
+            !host->authority().set_distribution(parent, {InterestKind::Area, 41}))
+            throw std::runtime_error("restored hierarchy did not start visible");
+        for (int i = 0; i < 6; ++i) step(false, true);
+        if (guest->object(child) || guest->object(parent) || !host->authority().set_distribution(parent, {}))
+            throw std::runtime_error("restored parent leaving interest did not hide child");
+        for (int i = 0; i < 6; ++i) step(false, true);
+        if (!guest->object(child) || !guest->object(parent))
+            throw std::runtime_error("restored parent's re-entry did not publish child");
         if (!host->authority().capture(object, {int32_t(456)}, host->tick()) || !standby.handoff() || standby.active())
             throw std::runtime_error("second host did not freeze for graceful handoff");
         for (int i = 0; i < 60; ++i) step(false, true);

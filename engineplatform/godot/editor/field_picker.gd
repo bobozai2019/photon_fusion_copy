@@ -67,7 +67,7 @@ func _branch(node: Node, parent: TreeItem) -> TreeItem:
     item.set_text(0, str(node.name))
     item.set_metadata(0, node)
     for child in node.get_children():
-        if child is Replica or child.owner == null: continue
+        if child is Replica or child is NetcodeReplicator or child.owner == null: continue
         _branch(child, item)
     return item
 

@@ -15,8 +15,10 @@ void SessionWorld::reset() {
     maps_.clear();
     outstanding_.clear();
     namespace_ = map_version_ = next_request_ = 0;
+    native_key_ = 0;
     hello_.reset();
     supported_ = false;
+    native_ready_ = false;
 }
 void SessionWorld::attach(Peer peer) {
     if (!peers_.try_emplace(peer).second)
@@ -137,7 +139,8 @@ const ObjectIdentity *SessionWorld::identity(ObjectId id) const {
     auto it = objects_.find(id);
     return it == objects_.end() ? nullptr : &it->second;
 }
-ObjectId SessionWorld::spawn(SchemaId schema, PlayerId owner, const Values &fields, ObjectIdentity identity) {
+ObjectId SessionWorld::spawn(SchemaId schema, PlayerId owner, const Values &fields, ObjectIdentity identity,
+                             const Distribution& distribution) {
     if (!game_.host() || !game_.round() || !owner || (identity.scene && !maps_.count(identity.scene)) ||
         find(identity.scene, identity.key) || resolve(identity.reference))
         return 0;
@@ -163,7 +166,7 @@ ObjectId SessionWorld::spawn(SchemaId schema, PlayerId owner, const Values &fiel
             return 0;
     }
     auto id = game_.authority().next_id();
-    if (!game_.authority().create(id, schema, owner, fields, game_.tick(), identity.scene))
+    if (!game_.authority().create(id, schema, owner, fields, game_.tick(), identity.scene, {}, distribution))
         return 0;
     if (identity.parent)
         game_.authority().set_scope_parent(id, identity.parent);
@@ -242,6 +245,127 @@ uint32_t SessionWorld::issue_spawn(SchemaId schema, SceneId scene, bool referenc
     return request;
 }
 
+bool SessionWorld::register_spawn_template(uint32_t id, SchemaId schema, ClaimMode mode, Distribution distribution)
+{
+    return id && id <= INT32_MAX && game_.schemas().get(schema) &&
+           game_.writers().supports_mode(schema, mode) &&
+           templates_.emplace(id, SpawnTemplate{schema, mode, std::move(distribution)}).second;
+}
+
+bool SessionWorld::can_request_initialized() const
+{
+    return game_.guest() && !game_.guest()->spectator() && namespace_ && supported_ && native_ready_ &&
+           game_.room_properties().ready() && next_request_ != UINT32_MAX && outstanding_.size() < 64;
+}
+
+uint64_t SessionWorld::request_initialized(uint32_t template_id, const Values& initial)
+{
+    const auto found = templates_.find(template_id);
+    if (!can_request_initialized() || found == templates_.end() || master_only(found->second.mode) ||
+        !game_.schemas().valid(found->second.schema, initial)) return 0;
+    const auto request = ++next_request_;
+    auto msg = game_packet(GameMessage::SpawnInitialized, game_.room(), game_.round());
+    msg.u32(request);
+    msg.u32(namespace_);
+    msg.u32(template_id);
+    for (const auto& value : initial) write_value(msg, value);
+    if (msg.bytes().size() > control_payload_limit ||
+        !link_.send(game_.guest()->peer(), Lane::Control, msg.bytes())) return 0;
+    outstanding_.insert(request);
+    return (uint64_t(namespace_) << 32) | request;
+}
+
+ObjectId SessionWorld::spawn_template(uint32_t template_id, const Values& values)
+{
+    return game_.host() ? spawn_template(template_id, game_.local(), 0, values) : 0;
+}
+
+ObjectId SessionWorld::spawn_template(uint32_t id, PlayerId creator, uint64_t reference, const Values& values)
+{
+    const auto found = templates_.find(id);
+    if (found == templates_.end()) return 0;
+    const auto& entry = found->second;
+    if (reference && (master_only(entry.mode) || !game_.writers().supports(creator, entry.schema))) return 0;
+    ObjectIdentity identity;
+    do {
+        if (native_key_ == UINT32_MAX) return 0;
+        identity.key = (uint64_t(id) << 32) | ++native_key_;
+    } while (find(identity.scene, identity.key));
+    identity.mode = entry.mode;
+    identity.reference = reference;
+    identity.grant_creator = reference != 0;
+    return spawn(entry.schema, creator, values, identity, entry.distribution);
+}
+
+void SessionWorld::send_spawn_result(Peer peer, uint32_t request, ObjectId id)
+{
+    auto out = game_packet(GameMessage::SpawnResult, game_.room(), game_.round());
+    out.u32(request);
+    out.u32(id);
+    if (!link_.send(peer, Lane::Control, out.bytes())) link_.close(peer);
+}
+
+void SessionWorld::receive_initialized(Peer peer, Reader& in)
+{
+    auto* member = game_.host()->member(peer);
+    auto it = peers_.find(peer);
+    if (!member || it == peers_.end() || !it->second.native_ready_sent ||
+        !game_.room_properties().negotiated(peer)) return;
+    auto& state = it->second;
+    uint32_t request, ns, template_id;
+    if (!in.u32(request) || !request || !in.u32(ns) || !in.u32(template_id) ||
+        ns != state.creation_namespace || !state.namespace_sent) return;
+    const auto reference = (uint64_t(ns) << 32) | request;
+    if (request <= state.last_request) {
+        send_spawn_result(peer, request, request == state.last_request ? state.last_result : resolve(reference));
+        return;
+    }
+    state.last_request = request;
+    state.last_result = 0;
+    const auto entry = templates_.find(template_id);
+    if (allow_guest_spawns_ && !member->spectator && member->ready && entry != templates_.end() &&
+        (entry->second.distribution.kind != InterestKind::User ||
+         game_.authority().subscribes_to(peer, entry->second.distribution))) {
+        Values initial;
+        for (const auto field : game_.schemas().get(entry->second.schema)->fields) {
+            Value value;
+            if (!read_value(in, field, value)) break;
+            initial.push_back(std::move(value));
+        }
+        if (in.done() && game_.schemas().valid(entry->second.schema, initial))
+            state.last_result = spawn_template(template_id, member->id, reference, initial);
+    }
+    send_spawn_result(peer, request, state.last_result);
+}
+
+bool SessionWorld::request_despawn(ObjectId id, uint64_t pending_reference)
+{
+    if (!game_.guest() || !game_.round() || !game_.room_properties().ready() ||
+        (pending_reference ? id || uint32_t(pending_reference >> 32) != namespace_ : !game_.object(id))) return false;
+    auto out = game_packet(GameMessage::DespawnRequested, game_.room(), game_.round());
+    out.u32(id);
+    out.u64(pending_reference);
+    return link_.send(game_.guest()->peer(), Lane::Control, out.bytes());
+}
+
+void SessionWorld::receive_despawn(Peer peer, Reader& in)
+{
+    auto* member = game_.host()->member(peer);
+    auto remote = peers_.find(peer);
+    if (!member || member->spectator || remote == peers_.end() || !game_.room_properties().negotiated(peer)) return;
+    ObjectId id;
+    uint64_t reference;
+    if (!in.u32(id) || !in.u64(reference) || !in.done()) return;
+    if (reference) {
+        if (id || uint32_t(reference >> 32) != remote->second.creation_namespace) return;
+        id = resolve(reference);
+    } else if (game_.writers().writer(id) != member->id) {
+        return;
+    }
+    const auto* meta = identity(id);
+    if (meta && templates_.count(uint32_t(meta->key >> 32))) destroy(id);
+}
+
 void SessionWorld::flush() {
     if (game_.host()) {
         std::vector<ObjectId> pending;
@@ -278,6 +402,17 @@ void SessionWorld::publish(Peer peer) {
             p.namespace_sent = link_.send(peer, Lane::Control, out.bytes());
         }
     }
+    if (p.namespace_sent && !p.native_ready_sent && game_.room_properties().negotiated(peer)) {
+        const auto* member = game_.host()->member(peer);
+        const bool claims_ready = templates_.empty() || game_.writers().supports_claims(peer);
+        if (member && member->ready && (member->spectator ||
+            (claims_ready && std::all_of(templates_.begin(), templates_.end(), [&](const auto& entry) {
+                return game_.writers().supports(member->id, entry.second.schema);
+            })))) {
+            auto ready = game_packet(GameMessage::WorldNativeReady, game_.room(), game_.round());
+            p.native_ready_sent = link_.send(peer, Lane::Control, ready.bytes());
+        }
+    }
     if (p.maps_sent != map_version_) {
         auto out = game_packet(GameMessage::WorldMaps, game_.room(), game_.round());
         out.u32(map_version_);
@@ -292,49 +427,53 @@ void SessionWorld::publish(Peer peer) {
             return;
         p.maps_sent = map_version_;
     }
-    std::map<ObjectId, ObjectIdentity> visible;
+    struct IdentityChange {
+        ObjectId id;
+        std::optional<ObjectIdentity> identity;
+    };
+    std::vector<IdentityChange> dirty, updates;
+    auto previous = p.seen.cbegin();
     for (const auto &[id, meta] : objects_) {
+        while (previous != p.seen.cend() && previous->first < id) {
+            dirty.push_back({previous->first, std::nullopt});
+            ++previous;
+        }
+        const bool was_seen = previous != p.seen.cend() && previous->first == id;
         bool known = game_.authority().known(peer, id);
         for (auto parent = meta.parent; known && parent; parent = objects_.at(parent).parent)
             known = game_.authority().known(peer, parent);
-        if (known)
-            visible.emplace(id, meta);
+        if (known && (!was_seen || meta != previous->second)) updates.push_back({id, meta});
+        if (!known && was_seen) dirty.push_back({id, std::nullopt});
+        if (was_seen) ++previous;
     }
-    std::vector<ObjectId> dirty;
-    for (const auto &[id, item] : p.seen)
-        if (!visible.count(id))
-            dirty.push_back(id);
-    for (const auto &[id, item] : visible)
-        if (!p.seen.count(id) || item != p.seen.at(id))
-            dirty.push_back(id);
+    for (; previous != p.seen.cend(); ++previous) dirty.push_back({previous->first, std::nullopt});
+    dirty.insert(dirty.end(), updates.begin(), updates.end());
     for (std::size_t index = 0; index < dirty.size();) {
         const auto n = std::min(records_per_message, dirty.size() - index);
         auto out = game_packet(p.extended ? GameMessage::WorldExtendedObjects : GameMessage::WorldObjects,
                                game_.room(), game_.round());
         out.u16(static_cast<std::uint16_t>(n));
         for (std::size_t i = index; i < index + n; ++i) {
-            auto id = dirty[i];
-            auto it = visible.find(id);
+            const auto& [id, identity] = dirty[i];
             out.u32(id);
-            out.u8(it != visible.end());
-            if (it != visible.end()) {
-                out.u32(it->second.scene);
-                out.u64(it->second.key);
-                out.u32(it->second.parent);
+            out.u8(identity.has_value());
+            if (identity) {
+                out.u32(identity->scene);
+                out.u64(identity->key);
+                out.u32(identity->parent);
                 if (p.extended) {
-                    const auto &meta = it->second;
-                    out.u8((meta.mode ? uint8_t(*meta.mode) + 1 : 0) | (meta.reference ? 128 : 0));
-                    if (meta.reference)
-                        out.u64(meta.reference);
+                    out.u8((identity->mode ? uint8_t(*identity->mode) + 1 : 0) | (identity->reference ? 128 : 0));
+                    if (identity->reference)
+                        out.u64(identity->reference);
                 }
             }
         }
         if (!link_.send(peer, Lane::Control, out.bytes()))
             return;
         for (std::size_t i = index; i < index + n; ++i) {
-            auto id = dirty[i];
-            if (visible.count(id))
-                p.seen[id] = visible.at(id);
+            const auto& [id, identity] = dirty[i];
+            if (identity)
+                p.seen[id] = *identity;
             else
                 p.seen.erase(id);
         }
@@ -424,7 +563,10 @@ bool SessionWorld::receive(const Event &event) {
          event.payload[0] != uint8_t(GameMessage::WorldExtendedHello) &&
          event.payload[0] != uint8_t(GameMessage::WorldExtendedObjects) &&
          event.payload[0] != uint8_t(GameMessage::WorldNamespace) &&
-         event.payload[0] != uint8_t(GameMessage::SpawnReferenced)))
+         event.payload[0] != uint8_t(GameMessage::SpawnReferenced) &&
+         event.payload[0] != uint8_t(GameMessage::SpawnInitialized) &&
+         event.payload[0] != uint8_t(GameMessage::DespawnRequested) &&
+         event.payload[0] != uint8_t(GameMessage::WorldNativeReady)))
         return false;
     Reader in(event.payload);
     GameMessage type;
@@ -432,6 +574,14 @@ bool SessionWorld::receive(const Event &event) {
         event.lane != (type == GameMessage::WorldHello ? Lane::Game : Lane::Control))
         return true;
     if (auto host = game_.host()) {
+        if (type == GameMessage::SpawnInitialized) {
+            receive_initialized(event.peer, in);
+            return true;
+        }
+        if (type == GameMessage::DespawnRequested) {
+            receive_despawn(event.peer, in);
+            return true;
+        }
         const auto *member = host->member(event.peer);
         auto peer = peers_.find(event.peer);
         if (!member || peer == peers_.end())
@@ -484,11 +634,7 @@ bool SessionWorld::receive(const Event &event) {
                         ? spawn(schema, member->id, f->second(member->id, scene), identity)
                         : 0;
             }
-            auto out = game_packet(GameMessage::SpawnResult, game_.room(), game_.round());
-            out.u32(request);
-            out.u32(p.last_result);
-            if (!link_.send(event.peer, Lane::Control, out.bytes()))
-                link_.close(event.peer);
+            send_spawn_result(event.peer, request, p.last_result);
         }
     } else if (event.peer == game_.guest()->peer()) {
         if (type == GameMessage::WorldOffer && in.done()) {
@@ -500,6 +646,7 @@ bool SessionWorld::receive(const Event &event) {
             if (in.u32(ns) && ns && in.done() && !namespace_)
                 namespace_ = ns;
         }
+        if (type == GameMessage::WorldNativeReady && in.done()) native_ready_ = true;
         if (supported_ && type == GameMessage::WorldMaps)
             accept_maps(in);
         if (supported_ && (type == GameMessage::WorldObjects || type == GameMessage::WorldExtendedObjects))

@@ -1,3 +1,7 @@
 {
-  "enabled_classes": ["RefCounted", "OS", "ProjectSettings"]
+  "enabled_classes": ["RefCounted", "OS", "Engine", "SceneTree", "Time", "ProjectSettings", "EditorPlugin", "ResourceLoader",
+    "CharacterBody2D", "CharacterBody3D", "RigidBody2D", "RigidBody3D", "PhysicsServer2D", "PhysicsDirectBodyState2D",
+    "MultiplayerAPI", "PackedScene", "Script", "Window", "EditorInterface", "EditorSelection", "EditorUndoRedoManager",
+    "UndoRedo", "ConfirmationDialog", "Tree", "TreeItem", "ItemList", "LineEdit", "GridContainer", "VBoxContainer",
+    "ScrollContainer", "Label", "Button", "CheckBox", "OptionButton", "SpinBox", "FileAccess", "Texture2D", "Shortcut"]
 }

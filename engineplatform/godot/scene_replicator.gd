@@ -1,10 +1,11 @@
 @tool
-class_name NetcodeReplicator
+class_name NetcodeLegacyReplicator
 extends "res://addons/netcode/replicated_object.gd"
 
 const Values = preload("scene_values.gd")
 const Fields = preload("scene_fields.gd")
 enum RootMode { NONE, AUTO }
+enum SampleKind { RAW, INTEGER, ARRAY, DICTIONARY }
 ## Relative to this Sync. Select the root of the .tscn to cover all its authored branches.
 @export var root_path: NodePath = ^".."
 @export var root_mode := RootMode.AUTO
@@ -30,22 +31,66 @@ var _automatic_paths: Array[NodePath] = []
 var _root_integer_members: Array[StringName] = []
 var _root_integer_values := PackedInt64Array()
 var _root_integer_bytes: Array = []
+var _use_internal_integer_sample := false
+var _root_sampler: NetcodeSceneSampler
+var _root_apply_members: Array[StringName] = []
+var _root_apply_kinds := PackedByteArray()
+var _proxy_changes_only := false
 var _pending_refs: Dictionary = {}
 var _smooth: Dictionary = {}
 var _snap := true
 var room: WeakRef
 var _bound_actor: WeakRef
+var _native_actor: WeakRef
+var _native_game: WeakRef
 var _baseline_epoch := -1
 
 func replication_root() -> Node:
+    if _native_actor: return _native_actor.get_ref()
     if _bound_actor: return _bound_actor.get_ref()
     if root_path.is_empty() or root_path.is_absolute() or root_path.get_subname_count(): return null
     var actor := get_node_or_null(root_path)
     if actor == self or actor is NetcodeReplicatedObject: return null
     return actor
 
+func configure_native(actor: Node, sync: NetcodeReplicator) -> void:
+    _native_actor = weakref(actor)
+    root_mode = sync.root_replication_mode
+    delegate_root_motion = true
+    var config := sync.replication_config
+    if config:
+        properties = config.properties
+        client_writable = config.properties
+        limits.assign(config.limits)
+        smooth_properties = config.smooth_properties
+        angle_properties = config.angle_properties
+    if sync is NetcodeServerReplicator:
+        layout_key = "server:" + type_key()
+
+func apply_native_model(fields: Array) -> bool:
+    if game == null or fields.is_empty() or _uses_body(): return false
+    var generation := _binding_generation
+    var sampled := sample_fields()
+    if generation != _binding_generation or sampled.size() != fields.size(): return false
+    _before_apply(true)
+    return _apply_fields(sampled, fields, 0, false)
+
+func set_native_game(session: NetcodeGame) -> void:
+    _native_game = weakref(session)
+
+func prime_native_writer() -> bool:
+    var baseline := game.sync_replica(object_id, game.read_fields(object_id, false), body_adapter != null)
+    if not baseline.get("baseline", false): return false
+    _before_apply(true)
+    initialized = true
+    return true
+
 static func binding_key(session: NetcodeGame) -> StringName:
     return "netcode_binding_" + String.num_uint64(session.get_instance_id(), 16)
+
+func bind_native(session: NetcodeGame, id: int, proxy_changes_only: bool) -> bool:
+    _proxy_changes_only = proxy_changes_only
+    return bind(session, id)
 
 func bind(session: NetcodeGame, id: int) -> bool:
     var actor := replication_root()
@@ -66,7 +111,39 @@ func bind(session: NetcodeGame, id: int) -> bool:
     _root_integer_values.resize(_root_integer_members.size())
     _root_integer_bytes.resize(_root_integer_members.size())
     if not _root_integer_members.is_empty(): _root_integer_bytes.fill(Values.encode_integer(0))
+    # Keep script subclasses' sample_fields overrides on the virtual path.
+    if get_script().get_base_script() == preload("replicated_object.gd"):
+        _use_internal_integer_sample = not _root_integer_members.is_empty()
+        if (not _use_internal_integer_sample or _proxy_changes_only) and not _uses_body():
+            _bind_root_sample()
     return true
+
+func _bind_root_sample() -> void:
+    for path in _paths:
+        if not _node_paths[path].is_empty() or not _member_names.has(path) or _kinds[path] == "object_ref" or _records.has(path):
+            return
+    if _paths.is_empty(): return
+    var members: Array[StringName] = []
+    var kinds := PackedByteArray()
+    var caps := PackedInt32Array()
+    # Native root fields without interpolation can reuse the sampler's member order on apply.
+    var direct_apply := _native_actor != null and _interpolation.is_empty() and _automatic_paths.is_empty()
+    for path in _paths:
+        var kind := SampleKind.RAW
+        match _kinds[path]:
+            "integer64": kind = SampleKind.INTEGER
+            "array_value": kind = SampleKind.ARRAY
+            "dictionary_value": kind = SampleKind.DICTIONARY
+        direct_apply = direct_apply and kind <= SampleKind.INTEGER
+        members.append(_member_names[path])
+        kinds.append(kind)
+        caps.append(_caps.get(path, 0))
+    var sampler := NetcodeSceneSampler.new()
+    if not sampler.configure(members, kinds, caps): return
+    _root_sampler = sampler
+    if direct_apply:
+        _root_apply_members = members
+        _root_apply_kinds = kinds
 
 
 func _record_fields(script:Script) -> Array:
@@ -207,20 +284,40 @@ func is_write_ready() -> bool:
 
 func sample_fields() -> Array:
     if not _root_integer_members.is_empty():
-        var root := replication_root()
-        if root == null: return []
-        for i in _root_integer_members.size():
-            var value: Variant = root.get(_root_integer_members[i])
-            if typeof(value) != TYPE_INT: return []
-            if _root_integer_values[i] != value:
-                _root_integer_values[i] = value
-                _root_integer_bytes[i] = Values.encode_integer(value)
-        return _root_integer_bytes.duplicate()
+        var fields := _sample_root_integers()
+        for i in fields.size():
+            fields[i] = fields[i].duplicate()
+        return fields
     if not _uses_body() and _paths.is_empty(): return [true]
     return super.sample_fields()
 
+func _sample_for_sync() -> Array:
+    if _native_actor and not initialized and not _uses_body():
+        return game.read_fields(object_id, false)
+    if _use_internal_integer_sample: return _sample_root_integers()
+    var sampler := _root_sampler
+    if sampler: return sampler.sample(replication_root(), _encode_root_collection)
+    return sample_fields()
+
+static func _encode_root_collection(value: Variant, kind: String, capacity: int) -> Variant:
+    return Values.new().encode(value, kind, capacity)
+
+func _sample_root_integers() -> Array:
+    var root := replication_root()
+    if root == null: return []
+    var generation := _binding_generation
+    for i in _root_integer_members.size():
+        var value: Variant = root.get(_root_integer_members[i])
+        if generation != _binding_generation or typeof(value) != TYPE_INT: return []
+        if _root_integer_values[i] != value:
+            _root_integer_values[i] = value
+            _root_integer_bytes[i] = Values.encode_integer(value)
+    return _root_integer_bytes.duplicate()
+
 func _read_member(target:Node,path:NodePath) -> Variant:
+    var generation := _binding_generation
     var value = super._read_member(target,path)
+    if generation != _binding_generation or not is_instance_valid(target): return null
     var kind:String=_kinds[path]
     if kind == "integer64":
         if typeof(value) != TYPE_INT: return null
@@ -236,7 +333,8 @@ func _read_member(target:Node,path:NodePath) -> Variant:
     if kind!=Fields.wire(kind): return Values.new().encode(value,kind,_caps[path])
     if kind!="object_ref": return value
     var session = room.get_ref() if room else null
-    if session==null: return 0
+    var native: NetcodeGame = _native_game.get_ref() if _native_game else null
+    if session == null and native == null: return 0
     if _pending_refs.has(path):
         var saved:Dictionary=_pending_refs[path]
         var previous:Node=saved.node.get_ref() if saved.node else null
@@ -247,12 +345,64 @@ func _read_member(target:Node,path:NodePath) -> Variant:
                 saved.node=weakref(resolved) if resolved else null
             return saved.handle
         _pending_refs.erase(path)
-    return session.node_reference(value) if is_instance_valid(value) and value is Node else 0
+    if not is_instance_valid(value) or not value is Node: return 0
+    if native:
+        var key := binding_key(native)
+        var replica: Node = value.get_meta(key).get_ref() if value.has_meta(key) else null
+        return replica.reference() if replica else 0
+    return session.node_reference(value)
 
 func _before_apply(baseline:bool) -> void:
     if baseline: _baseline_epoch = game.routing_info(object_id, false).epoch
+    if not _root_apply_members.is_empty(): return
     _snap=baseline or has_authority()
     if _snap: _smooth.clear()
+
+func can_apply_received_fields() -> bool:
+    return not _root_apply_members.is_empty()
+
+func apply_received_fields(mask: int, fields: Array, baseline: bool) -> void:
+    var root := replication_root()
+    if root == null: return
+    var generation := _binding_generation
+    if baseline: _before_apply(true)
+    var next := 0
+    for i in _root_apply_members.size():
+        if not (mask & (1 << i)): continue
+        var value: Variant = fields[next]
+        next += 1
+        if _root_apply_kinds[i] == SampleKind.INTEGER:
+            if value.size() != 8: continue
+            value = value.decode_s64(0)
+        root.set(_root_apply_members[i], value)
+        if generation != _binding_generation or not is_instance_valid(root): return
+    initialized = true
+
+func _apply_fields(sampled: Array, fields: Array, offset: int, baseline: bool, sample_invalidated := false) -> bool:
+    if _root_apply_members.is_empty() or offset != 0 or sample_invalidated:
+        return super._apply_fields(sampled, fields, offset, baseline, sample_invalidated)
+    var root := replication_root()
+    if root == null: return false
+    var generation := _binding_generation
+    var wrote_field := false
+    for i in _root_apply_members.size():
+        var value: Variant = fields[i]
+        var matched: bool = not baseline and sampled[i] == value
+        if matched and not wrote_field: continue
+        var member := _root_apply_members[i]
+        var integer := _root_apply_kinds[i] == SampleKind.INTEGER
+        if integer:
+            if value.size() != 8: continue
+            value = value.decode_s64(0)
+        # A preceding setter can invalidate even a matching sample.
+        if matched:
+            var current: Variant = root.get(member)
+            if generation != _binding_generation or not is_instance_valid(root): return false
+            if (not integer or current is int) and current == value: continue
+        root.set(member, value)
+        if generation != _binding_generation or not is_instance_valid(root): return false
+        wrote_field = true
+    return true
 
 func _equal_member(path: NodePath) -> void:
     _smooth.erase(path)
@@ -295,27 +445,30 @@ func _physics_process(dt:float) -> void:
     if replication_root() == null:
         unbind()
         return
-    var state:=game.routing_info(object_id,false)
-    if state.is_empty() or state.schema!=schema_id:
+    if not game._has_replica_layout(object_id, schema_id):
         if initialized: game.unbind_replica(object_id)
         initialized=false
         _smooth.clear()
         _pending_refs.clear()
         return
+    var generation := _binding_generation
     super._physics_process(dt)
-    if _smooth.is_empty(): return
+    if generation != _binding_generation or _smooth.is_empty(): return
     var weight:=1.0-exp(-dt/maxf(smoothing_seconds,0.0001))
     for path:NodePath in _smooth.keys():
         var target:=_target(path)
         if target==null: continue
         var current=super._read_member(target,path)
+        if generation != _binding_generation or not is_instance_valid(target): return
         var shadow:Dictionary=_smooth[path]
         shadow.age+=dt
         var goal=shadow.value
         var value=goal
         var angle:bool=_interpolation.get(path,0)==2 or path==^".:rotation" and path in _automatic_paths
         match typeof(goal):
-            TYPE_FLOAT: value=lerp_angle(current,goal,weight) if angle else lerpf(current,goal,weight)
+            TYPE_FLOAT:
+                value=lerp_angle(current,goal,weight) if angle else lerpf(current,goal,weight)
+                if (is_zero_approx(angle_difference(value, goal)) if angle else is_equal_approx(value, goal)): value=goal
             TYPE_VECTOR3:
                 if angle: value=Vector3(lerp_angle(current.x,goal.x,weight),lerp_angle(current.y,goal.y,weight),lerp_angle(current.z,goal.z,weight))
                 else: value=current.lerp(goal,weight)
@@ -323,7 +476,10 @@ func _physics_process(dt:float) -> void:
             TYPE_QUATERNION: value=current.slerp(goal,weight)
             _:
                 if shadow.age<smoothing_seconds*0.5: continue
-        super._write_member(target,path,value)
+        if value==current: value=goal
+        if value!=current:
+            super._write_member(target,path,value)
+            if generation != _binding_generation: return
         if value==goal: _smooth.erase(path)
 
 func unbind() -> void:
@@ -334,6 +490,10 @@ func unbind() -> void:
     _root_integer_members.clear()
     _root_integer_values.clear()
     _root_integer_bytes.clear()
+    _use_internal_integer_sample = false
+    _root_sampler = null
+    _root_apply_members.clear()
+    _root_apply_kinds.clear()
     _smooth.clear()
     _pending_refs.clear()
     super.unbind()

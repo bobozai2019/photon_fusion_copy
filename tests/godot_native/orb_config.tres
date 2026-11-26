@@ -1,0 +1,4 @@
+[gd_resource type="NetcodeReplicationConfig" format=3]
+
+[resource]
+properties = Array[NodePath]([NodePath(":value")])

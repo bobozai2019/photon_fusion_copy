@@ -1,4 +1,5 @@
 #include "session/game_session.hpp"
+#include "session/checkpoint.hpp"
 #include "session/script_game.hpp"
 #include <sstream>
 #include "transport/memory.hpp"
@@ -39,6 +40,100 @@ void test_gameplay_methods() {
     check(call && call->values==Values{int32_t(17)} && call->sender==host.session().local(),"typed local delivery");
     host.pop_typed();
 }
+void test_replica_write_layout() {
+    std::istringstream text(
+        "schema 1 1 Partial\nint 1 . first\nint 2 . coordinator\nint 3 . last\n"
+        "schema 2 1 Full\nint 1 . value\n");
+    const ReplicationLayout layout(text);
+    auto server = std::make_unique<MemoryTransport>();
+    auto peer = std::make_unique<MemoryTransport>();
+    server->link(*peer);
+    SessionOptions options;
+    options.room = 92;
+    options.host = true;
+    ScriptGame host(std::move(server), options, layout);
+    options.host = false;
+    ScriptGame guest(std::move(peer), options, layout);
+    for (auto* game : {&host, &guest}) {
+        check(game->model(1, {1, 3}, ClaimMode::Transaction, 0), "register non-contiguous writable fields");
+        check(game->model(2, {1}, ClaimMode::Dynamic, 0), "register fully writable schema");
+    }
+    guest.set_snapshot_change_events(false);
+    TimePoint now{};
+    auto advance = [&] {
+        for (int i = 0; i < 25; ++i) {
+            host.pump(now);
+            guest.pump(now);
+            now += 25ms;
+        }
+    };
+    advance();
+    check(host.session().start(now), "start write layout room");
+    const Values initial{std::int32_t(1), std::int32_t(2), std::int32_t(3)};
+    const auto partial = host.session().world().spawn(1, host.session().local(), initial);
+    const auto full = host.session().world().spawn(2, host.session().local(), {std::int32_t(4)});
+    check(partial && full, "spawn both write layouts");
+    const auto local_replica = host.receive_native_replica_view(full);
+    check(local_replica.role == ScriptGame::ReplicaRole::Writer && !local_replica.values,
+          "native replica step identified the local writer");
+    Values applied;
+    const Values local_sample{std::int32_t(6)};
+    check(host.sync_replica(full, {std::int32_t(4)}, applied) == 2, "install host capture baseline");
+    check(host.sync_replica(full, local_sample, applied) == 0 && applied.empty(), "capture steady host sample");
+    const auto revision = host.session().object(full)->revision;
+    check(host.sync_replica(full, {Bytes{1}}, applied) == 0 && host.session().object(full)->revision == revision,
+          "invalid steady host sample advanced revision");
+    check(host.submit(full, {std::int32_t(4)}) && host.sync_replica(full, local_sample, applied) == 0 &&
+          host.session().object(full)->values == Values{std::int32_t(4)}, "unchanged sample overwrote an explicit host write");
+    advance();
+    const auto guest_id = guest.session().local();
+    check(host.session().writers().assign(partial, guest_id, host.session().tick()) &&
+          host.session().writers().assign(full, guest_id, host.session().tick()), "delegate both layouts");
+    advance();
+    check(guest.sync_replica(partial, initial, applied) == 2 && applied == initial,
+          "apply partial-layout authority baseline");
+    check(guest.sync_replica(full, {std::int32_t(4)}, applied) == 2, "apply fully writable authority baseline");
+    const Values expected{std::int32_t(5), std::int32_t(2), std::int32_t(6)};
+    check(guest.sync_replica(partial, {std::int32_t(5), std::int32_t(99), std::int32_t(6)}, applied) == 1 &&
+          applied == expected, "correct coordinator field and preserve writable slot order");
+    check(guest.sync_replica(full, {std::int32_t(7)}, applied) == 0 && applied.empty(),
+          "fully writable capture needs no apply");
+    const auto sequence = guest.session().writers().grant(full)->sample.sequence;
+    check(guest.sync_replica(full, {Bytes{7}}, applied) == 0 &&
+          guest.session().writers().grant(full)->sample.sequence == sequence,
+          "invalid guest sample did not replace the latest valid submission");
+    advance();
+    check(host.read(partial, false, applied) && applied == expected, "host received partial layout");
+    check(host.read(full, false, applied) && applied == Values{std::int32_t(7)}, "host received full layout");
+    check(guest.read(partial, false, applied) && applied == expected, "guest received state without change events");
+    for (const auto& event : guest.take_events())
+        check(event.kind != ScriptEventKind::Changed, "native scene subscriber did not request change events");
+
+    const auto proxy_baseline = host.receive_native_replica_view(partial);
+    check(proxy_baseline.role == ScriptGame::ReplicaRole::Observer && proxy_baseline.baseline &&
+          proxy_baseline.mask == 7 && proxy_baseline.values &&
+          *proxy_baseline.values == expected, "borrowed proxy baseline in schema order");
+    const Values changed{std::int32_t(5), std::int32_t(2), std::int32_t(8)};
+    check(guest.sync_replica(partial, changed, applied) == 0, "update the last writable field");
+    advance();
+    const auto proxy_delta = host.receive_replica_view(partial);
+    check(!proxy_delta.baseline && proxy_delta.mask == 4 && proxy_delta.values && *proxy_delta.values == changed,
+          "borrowed sparse delta keeps the value at its schema index");
+
+    check(host.session().writers().assign(full, host.session().local(), host.session().tick()), "reclaim full layout");
+    advance();
+    std::uint64_t mask = 0;
+    check(guest.receive_replica(full, applied, mask) == 2 && mask == 1 && applied == Values{std::int32_t(7)},
+          "observer sees the reclaimed writer baseline");
+    const auto snapshot = guest.session().object(full)->revision;
+    check(guest.receive_replica(full, applied, mask) == 0 && mask == 0, "stable observer needs no new application");
+    check(guest.session().writers().request(full) && guest.submit(full, {std::int32_t(11)}), "queue predicted claim and write");
+    check(guest.session().object(full)->revision == snapshot, "prediction did not change the canonical revision");
+    const auto predicted = guest.receive_replica_view(full);
+    check(!predicted.baseline && predicted.mask == 1 && predicted.values && *predicted.values == Values{std::int32_t(11)},
+          "predicted view remains valid after the presentation temporary is destroyed");
+}
+
 void test_time() {
     NetworkClock clock;
     TimePoint start{};
@@ -182,6 +277,131 @@ void test_multiple_models() {
         guest.prediction().confirmed(traced)==60 && std::get<int32_t>(host.object(traced)->values.front())==1830 &&
         *guest.prediction().state(traced)==host.object(traced)->values,"trace lost, duplicated or failed to replay an input");
     std::cout << "trace unique=60 host_callbacks=60 guest_callbacks=" << executed << " resets=" << resets << " confirmed=60 sum=1830\n";
+}
+
+void test_timed_input_scheduling() {
+    MemoryTransport a, b;
+    SessionOptions options;
+    options.host = true;
+    options.room = 185;
+    options.step = 16ms;
+    Schemas schemas;
+    schemas.add({1, 1, {{1, FieldType::Int}}});
+    GameSession host(a, options, schemas);
+    options.host = false;
+    GameSession guest(b, options, schemas);
+    auto input = [](float delta, uint8_t payload) {
+        Writer packet;
+        packet.f32(delta);
+        packet.u8(payload);
+        return packet.bytes();
+    };
+    std::vector<uint8_t> callbacks;
+    std::vector<Tick> ticks;
+    unsigned neutral = 0;
+    const auto register_model = [&](GameSession& game, bool authoritative) {
+        SimulationModel model;
+        model.timed_input = true;
+        model.neutral = input(0, 0);
+        model.input_bytes = model.neutral.size();
+        model.object_step = [&, authoritative](ObjectId, Values& state, const Bytes& data, Tick tick, SimulationStep stage) {
+            if (stage == SimulationStep::Neutral) {
+                if (authoritative) ++neutral;
+                return true;
+            }
+            if (authoritative) {
+                callbacks.push_back(data.back());
+                ticks.push_back(tick);
+            }
+            std::get<int32_t>(state.front()) += data.back();
+            return true;
+        };
+        return game.prediction().register_model(1, std::move(model));
+    };
+    SimulationModel too_large;
+    too_large.input_bytes = SimulationModel::payload_limit + 1;
+    too_large.neutral.resize(too_large.input_bytes);
+    too_large.step = [](Values&, const Bytes&, Tick) { return true; };
+    check(!host.prediction().register_model(1, std::move(too_large)), "legacy input model retained its size limit");
+    check(register_model(host, true) && register_model(guest, false), "register delta-driven prediction");
+    TimePoint now{};
+    auto step = [&] {
+        now += 16ms;
+        guest.pump(now);
+        host.pump(now);
+        guest.pump(now);
+    };
+    a.link(b);
+    for (int i = 0; i < 5; ++i) step();
+    check(host.start(now), "start delta-driven room");
+    const auto id = host.world().spawn(1, 1, {int32_t(0)});
+    check(id && host.prediction().bind(id, 2), "bind a remote input player");
+    for (int i = 0; i < 20; ++i) step();
+    check(guest.prediction().state(id), "remote prediction baseline");
+    const auto before = neutral;
+    check(!guest.prediction().advance(id, input(2.0f, 9)), "reject a duration that could stall the stream");
+    check(guest.prediction().advance(id, input(.048f, 1)) &&
+          guest.prediction().advance(id, input(.008f, 2)) &&
+          guest.prediction().advance(id, input(.008f, 3)), "queue a long head and two short inputs");
+    check(guest.prediction().state(id)->front() == Value(int32_t(6)), "guest prediction stays immediate");
+    step();
+    check(callbacks.empty() && host.prediction().queued(id) == 3, "first service step fired before the head duration");
+    step();
+    check(callbacks.empty() && neutral == before, "pending head also ran a neutral step");
+    step();
+    check(callbacks == std::vector<uint8_t>{1} && host.prediction().confirmed(id) == 1,
+          "head command did not execute at its accumulated duration");
+    step();
+    check(callbacks == std::vector<uint8_t>({1, 2, 3}) && guest.prediction().confirmed(id) == 3 &&
+          ticks[0] < ticks[1] && ticks[1] < ticks[2] && host.object(id)->values.front() == Value(int32_t(6)),
+          "two short commands did not execute in order in one service step");
+
+    check(guest.prediction().advance(id, input(0.5f, 9)), "queue input from the departing writer");
+    step();
+    check(host.prediction().queued(id) == 1 && host.prediction().confirmed(id) == 3,
+          "old writer's command is still waiting when reassigned");
+    check(host.prediction().bind(id, 1) && !host.prediction().queued(id), "move input authority and discard the old queue");
+    const auto publish_tick = host.tick();
+    check(host.prediction().advance(id, input(.023f, 4)) && host.prediction().advance(id, input(.005f, 5)) &&
+          host.tick() == publish_tick && host.prediction().queued(id) == 0 && host.prediction().confirmed(id) == 2 &&
+          callbacks == std::vector<uint8_t>({1, 2, 3, 4, 5}) &&
+          host.object(id)->values.front() == Value(int32_t(15)), "coordinator input was not committed immediately");
+    const auto before_local_flush = neutral;
+    step();
+    check(callbacks.size() == 5 && neutral == before_local_flush && ticks[3] < ticks[4],
+          "local input was processed a second time when the service step advanced");
+    step();
+    check(neutral == before_local_flush, "the local duration also covers a second service step");
+    step();
+    check(neutral == before_local_flush + 1 && !guest.prediction().advance(id, input(.016f, 6)),
+          "idle simulation or input reassignment regressed");
+    for (int i = 0; i < 5; ++i)
+        check(host.prediction().advance(id, input(.016f, 1)), "local catch-up input dispatch");
+    const auto before_catch_up = neutral;
+    now += 5 * 16ms;
+    host.pump(now);
+    check(neutral == before_catch_up && callbacks.size() == 10, "catch-up service steps duplicated local simulation time");
+
+    for (int i = 0; i < 4; ++i)
+        check(host.prediction().advance(id, input(.008f, 1)), "model time advances faster than service time");
+    const auto last_model_tick = ticks.back();
+    check(host.prediction().bind(id, 2) && host.prediction().bind(id, 1) &&
+          host.prediction().advance(id, input(.008f, 1)) && ticks.back() > last_model_tick,
+          "model callback tick regressed across an input handover");
+
+    check(host.prediction().advance(id, input(.5f, 1)), "checkpoint captures already committed local time");
+    const auto image = CheckpointCodec::capture(host);
+    const auto before_restore = ticks.back();
+    MemoryTransport moved_transport;
+    options.host = true;
+    options.admission.coordinator = 2;
+    GameSession moved(moved_transport, options, schemas);
+    check(register_model(moved, true) && CheckpointCodec::restore(moved, image, now), "restore timed model checkpoint");
+    const auto neutral_before_restore = neutral;
+    for (int i = 1; i <= 32; ++i) moved.pump(now + i * 16ms);
+    check(neutral == neutral_before_restore, "restored host ran neutral during already committed input time");
+    check(moved.prediction().advance(id, input(.008f, 1)) && ticks.back() == before_restore + 1,
+          "checkpoint restore lost the model's callback tick");
 }
 
 void test_rpc_outcomes() {
@@ -334,7 +554,8 @@ void test_anchor_recovery() {
     GameSession guest(b, opts, types);
     TimePoint now{};
     unsigned acks = 0, resets = 0;
-    bool cut = false;
+    uint32_t lost_dictionary = 0;
+    bool cut = false, lose_next_dictionary = false;
     auto frame = [&] {
         now += 30ms;
         for (auto& e : a.poll(now)) {
@@ -350,7 +571,25 @@ void test_anchor_recovery() {
             host.receive(e, now);
         }
         host.flush(now);
-        guest.pump(now);
+        for (const auto& e : b.poll(now)) {
+            if (lose_next_dictionary && e.type == EventType::Message && e.lane == Lane::Game) {
+                Reader in(e.payload);
+                GameMessage type;
+                if (read_game_header(in, type, host.room(), host.round()) && type == GameMessage::CompactSnapshot) {
+                    uint8_t seq;
+                    check(in.u8(seq) && seq > 0 && seq < 128, "unexpected compact sequence in fixture");
+                    lost_dictionary = seq;
+                    lose_next_dictionary = false;
+                    // Let the sender use a dictionary the receiver never installed.
+                    auto ack = game_packet(GameMessage::CodecAck, host.room(), host.round());
+                    ack.u32(lost_dictionary);
+                    check(b.send(e.peer, Lane::Game, ack.bytes()), "inject dictionary ACK");
+                    continue;
+                }
+            }
+            guest.receive(e, now);
+        }
+        guest.flush(now);
     };
     a.link(b);
     for (int i = 0; i < 4; ++i)
@@ -361,17 +600,83 @@ void test_anchor_recovery() {
     for (unsigned i = 1; i <= 50; ++i) {
         host.authority().capture(id, {value(i)}, host.tick());
         frame();
+        if (i == 31)
+            check(cut && resets == 0 && guest.object(id) &&
+                      std::get<std::string>(guest.object(id)->values[0]) == value(i),
+                  "confirmed dictionary was evicted during an ACK gap");
         if (acks >= 2 && i < 32)
             cut = true;
         else if (i >= 32)
             cut = false;
     }
+    lose_next_dictionary = true;
+    for (unsigned i = 51; i <= 54; ++i) {
+        host.authority().capture(id, {value(i)}, host.tick());
+        frame();
+    }
     for (unsigned i = 0; i < 6; ++i)
         frame();
     auto codec = host.codec(1);
-    check(resets > 0 && codec && codec->encoded_bytes < codec->original_bytes &&
-              std::get<std::string>(guest.object(id)->values[0]) == value(50),
+    check(lost_dictionary && resets > 0 && codec && codec->encoded_bytes < codec->original_bytes &&
+              guest.object(id) && std::get<std::string>(guest.object(id)->values[0]) == value(54),
           "lost dictionary failed to recover on the wire");
+}
+
+void test_native_rpc_before_roster() {
+    MemoryTransport h, a, b;
+    SessionOptions options;
+    options.room = 684;
+    options.admission = {3, true, false};
+    options.host = true;
+    Schemas schemas;
+    GameSession host(h, options, schemas);
+    options.host = false;
+    options.extended_join = true;
+    GameSession sender(a, options, schemas), joiner(b, options, schemas);
+    for (auto* game : {&host, &sender, &joiner}) game->room_properties().enable(11, {}, {});
+
+    auto now = Clock::now();
+    h.link(a);
+    check(host.start(now), "native RPC negotiation test starts");
+    for (int frame = 0; frame < 12 && !sender.room_properties().ready(); ++frame) {
+        now += 30ms;
+        host.pump(now);
+        sender.pump(now);
+    }
+    check(sender.room_properties().ready(), "sender finished native negotiation");
+    h.link(b);
+    for (int frame = 0; frame < 12 && !joiner.round(); ++frame) {
+        now += 30ms;
+        host.pump(now);
+        joiner.pump(now);
+    }
+    check(joiner.round() && !joiner.room_properties().ready(), "joiner's Hello is pending before the snapshot");
+    check(sender.send_native_rpc(0, joiner.local(), 1, {42}), "sender queues room RPC immediately after Hello");
+    host.pump(now);
+    bool first_roster = false, early_rpc = false;
+    for (const auto& event : b.poll(now)) {
+        if (event.type == EventType::Message && event.lane == Lane::Control && !event.payload.empty()) {
+            if (event.payload[0] == uint8_t(GameMessage::RoomPropertiesSnapshot)) first_roster = true;
+            if (event.payload[0] == uint8_t(GameMessage::NativeRpcDelivery)) early_rpc = !first_roster;
+        }
+        joiner.receive(event, now);
+    }
+    const auto calls = joiner.native_rpc().take_deliveries();
+    check(early_rpc && first_roster && joiner.room_properties().ready() && calls.size() == 1 &&
+          calls.front().sender == sender.local() && calls.front().target == int32_t(joiner.local()) &&
+          calls.front().data == Bytes{42}, "room RPC queued before the first snapshot was lost");
+    joiner.finish_native_rpc(calls.front().receipt, true);
+    host.pump(now);
+    sender.pump(now);
+    const auto results = sender.native_rpc().take_outcomes();
+    check(results.size() == 1 && results.front().status == NativeRpc::Status::Delivered,
+          "early room RPC did not complete after negotiation");
+
+    for (uint32_t token = 1; token <= 256; ++token)
+        check(host.send_native_rpc(0, NativeRpc::target_all, token, {42}, true), "room broadcast was admitted");
+    check(!host.send_native_rpc(0, NativeRpc::target_all, 257, {42}, true),
+          "host reported a route rejected for capacity as admitted");
+    check(host.native_rpc().take_deliveries().empty(), "sender-handled broadcasts were echoed back to the sender");
 }
 
 void test_word_authority() {
@@ -437,6 +742,260 @@ void test_word_authority() {
     check(host.writers().grant(id)->sample.source_step == 12 &&
           host.writers().grant(id)->sample.recovery == Bytes{9} && guest.writers().grant(id)->confirmed == 3,
           "zero-word sample did not advance recovery");
+
+    const Values replacement{Vector2{8, 12}, int32_t(15), int32_t(-9)};
+    check(guest.writers().submit(id, epoch, 13, replacement), "submit full replacement");
+    auto full = game_packet(GameMessage::AuthorityState, host.room(), host.round());
+    full.u32(id);
+    full.u32(epoch);
+    full.u32(4);
+    full.u32(13);
+    for (const auto& value : replacement) write_value(full, value);
+    full.u16(0);
+    check(client.send(guest.guest()->peer(), Lane::Game, full.bytes()), "send full replacement");
+    pump(3);
+    check(host.object(id)->values == replacement && guest.writers().grant(id)->confirmed == 4,
+          "full sample did not replace the word baseline");
+
+    auto malformed = game_packet(GameMessage::AuthorityStateWords, host.room(), host.round());
+    malformed.u32(id);
+    malformed.u32(epoch);
+    malformed.u32(5);
+    malformed.u32(14);
+    write_word_varuint(malformed, 1);
+    write_word_change(malformed, 0, 0);
+    malformed.u16(4);
+    check(client.send(guest.guest()->peer(), Lane::Game, malformed.bytes()), "send truncated word sample");
+    pump(2);
+    check(host.object(id)->values == replacement && host.writers().grant(id)->confirmed == 4,
+          "invalid sample advanced accepted words");
+    const Values after_full{Vector2{8, 12}, int32_t(16), int32_t(-9)};
+    check(guest.writers().submit(id, epoch, 14, after_full), "submit delta on replacement baseline");
+    pump(4);
+    check(host.object(id)->values == after_full && guest.writers().grant(id)->confirmed == 5,
+          "word delta lost unmodified fields from the full replacement");
+    check(guest.object(id)->values == after_full && guest.object(id)->revision == host.object(id)->revision,
+          "canonical snapshot did not relay the accepted word state");
+}
+
+void test_spatial_writer_interest(bool retain) {
+    MemoryTransport server, client, observer;
+    SessionOptions options;
+    options.room = 410;
+    options.admission = {3, true, true};
+    options.host = true;
+    options.retain_spatial_writer_interest = retain;
+    Schemas schemas;
+    check(schemas.add({1, 1, {{1, FieldType::Int}}}), "spatial writer schema");
+    GameSession host(server, options, schemas);
+    options.host = false;
+    GameSession guest(client, options, schemas), other(observer, options, schemas);
+    for (auto* game : {&host, &guest, &other})
+        check(game->writers().register_model(1, 1, {1}), "spatial writer model");
+    TimePoint now{};
+    const auto pump = [&] {
+        for (int frame = 0; frame < 12; ++frame) {
+            now += 30ms;
+            host.pump(now);
+            guest.pump(now);
+            other.pump(now);
+        }
+    };
+    server.link(client);
+    server.link(observer);
+    pump();
+    check(host.start(now), "spatial writer start");
+    pump();
+    const auto writer_peer = host.host()->members().at(guest.local()).peer;
+    const auto observer_peer = host.host()->members().at(other.local()).peer;
+    check(host.authority().subscribe(writer_peer, InterestKind::Area, {1}) &&
+          host.authority().subscribe(observer_peer, InterestKind::Area, {1}), "spatial observers subscribe");
+    const auto id = host.world().spawn(1, host.local(), {int32_t(11)});
+    check(id && host.authority().set_distribution(id, {InterestKind::Area, 1}), "spatial writer spawn");
+    pump();
+    check(host.writers().assign(id, guest.local(), host.tick()), "spatial writer grant");
+    pump();
+    const auto* grant = guest.writers().grant(id);
+    check(grant != nullptr, "guest received spatial writer grant");
+    const auto epoch = grant->epoch;
+    check(host.authority().set_distribution(id, {InterestKind::Area, 2}), "move spatial writer outside of view");
+    pump();
+    check(!other.object(id), "unsubscribed observer still sees spatial writer");
+    if (retain) {
+        check(guest.object(id) && guest.writers().writer(id) == guest.local() &&
+              guest.writers().submit(id, epoch, 1, {int32_t(19)}), "out-of-area writer lost readiness");
+        pump();
+        check(host.object(id)->values == Values{int32_t(19)} && host.writers().grant(id)->confirmed == 1,
+              "out-of-area writer sample did not apply");
+        check(host.writers().assign(id, host.local(), host.tick()), "reclaim spatial writer");
+        pump();
+    }
+    check(!guest.object(id) && host.writers().writer(id) == host.local(), "released spatial writer was not culled");
+    check(host.authority().subscribe(writer_peer, InterestKind::Area, {2}), "spatial writer re-enter");
+    pump();
+    check(guest.object(id) && guest.object(id)->values == Values{int32_t(retain ? 19 : 11)},
+          "re-entered spatial object did not receive the latest baseline");
+    if (retain) {
+        check(host.writers().assign(id, guest.local(), host.tick()), "re-assign spatial writer");
+        pump();
+        check(host.authority().set_interest(writer_peer, 0, std::set<ObjectId>{}), "explicit visibility selection");
+        pump();
+        check(!guest.object(id) && host.writers().writer(id) == host.local(), "writer visibility selection was bypassed");
+    }
+}
+
+void test_spatial_subscription_rates(bool legacy_host) {
+    MemoryTransport server, client;
+    SessionOptions options;
+    options.room = 411;
+    options.admission = {2, true, true};
+    options.host = true;
+    Schemas schemas;
+    check(schemas.add({1, 1, {{1, FieldType::Int}}}), "spatial rate schema");
+    GameSession host(server, options, schemas);
+    options.host = false;
+    GameSession guest(client, options, schemas);
+    for (auto* game : {&host, &guest}) game->room_properties().enable(12, {}, {});
+    TimePoint now{};
+    const auto pump = [&](unsigned frames) {
+        for (unsigned frame = 0; frame < frames; ++frame) {
+            now += 30ms;
+            host.pump(now);
+            for (const auto& event : client.poll(now)) {
+                if (legacy_host && event.type == EventType::Message && !event.payload.empty() &&
+                    event.payload.front() == uint8_t(GameMessage::RoomAreaRatesSupported)) continue;
+                guest.receive(event, now);
+            }
+            guest.flush(now);
+        }
+    };
+    server.link(client);
+    pump(12);
+    check(host.start(now), "spatial rate session start");
+    pump(12);
+    check(guest.room_properties().ready() && guest.room_properties().supports_area_rates() != legacy_host,
+          "spatial subscription rate negotiation");
+    check(guest.subscribe_local_area_rates({{1, 1}, {2, 4}}), "request spatial rates");
+    const auto near = host.world().spawn(1, host.local(), {int32_t(0)});
+    const auto far = host.world().spawn(1, host.local(), {int32_t(0)});
+    check(near && far && host.authority().set_distribution(near, {InterestKind::Area, 1}) &&
+          host.authority().set_distribution(far, {InterestKind::Area, 2}), "set spatial rate groups");
+    pump(12);
+    check(guest.object(near) && guest.object(far), "spatial subscriptions delivered both baselines");
+    unsigned near_updates = 0, far_updates = 0, enters = 0;
+    guest.on_snapshot = [&](const AppliedSnapshot& snapshot) {
+        near_updates += std::count(snapshot.changed.begin(), snapshot.changed.end(), near);
+        far_updates += std::count(snapshot.changed.begin(), snapshot.changed.end(), far);
+        enters += std::count(snapshot.ready.begin(), snapshot.ready.end(), far);
+    };
+    for (int32_t value = 1; value <= 16; ++value) {
+        check(host.authority().capture(near, {value}, host.tick()) &&
+              host.authority().capture(far, {value}, host.tick()), "publish spatial-rate values");
+        pump(1);
+    }
+    pump(6);
+    check(near_updates >= 14 && (legacy_host ? far_updates == near_updates : far_updates >= 4 && far_updates <= 6),
+          "spatial rates did not change delivery cadence as negotiated");
+    check(guest.object(far)->values == Values{int32_t(16)}, "far rate did not reach the final value");
+    check(guest.subscribe_local_area_rates({{1, 1}, {2, 1}}), "raise the far spatial rate");
+    pump(3);
+    check(host.authority().capture(far, {int32_t(17)}, host.tick()), "publish a fast spatial update");
+    pump(1);
+    check(guest.object(far)->values == Values{int32_t(17)} && !enters, "rate change disrupted visibility or the next delivery");
+}
+
+void test_authority_batch(bool legacy) {
+    class OrderedTransport final : public Transport {
+      public:
+        std::vector<Event> poll(TimePoint now) override { return memory.poll(now); }
+        bool send(Peer peer, Lane lane, const Bytes& payload) override { return memory.send(peer, lane, payload); }
+        void close(Peer peer) override { memory.close(peer); }
+        bool reliable_ordered(Lane) const override { return true; }
+        Traffic traffic() const override { return memory.traffic(); }
+        MemoryTransport memory;
+    } server, client;
+    SessionOptions options;
+    options.room = 409;
+    options.host = true;
+    options.admission = {2, true, true};
+    Schemas schemas;
+    check(schemas.add({1, 1, {{1, FieldType::Vec2}, {2, FieldType::Int}}}) &&
+          schemas.add({2, 1, {{1, FieldType::Flag}}}), "batch schemas");
+    GameSession host(server, options, schemas);
+    options.host = false;
+    GameSession guest(client, options, schemas);
+    for (auto* game : {&host, &guest})
+        check(game->writers().register_model(1, 1, {1, 2}) && game->writers().register_model(2, 1, {1}),
+              "batch models");
+    TimePoint now{};
+    const auto kind = [](const Event& e) {
+        return e.type == EventType::Message && !e.payload.empty() ? GameMessage(e.payload[0]) : GameMessage{};
+    };
+    const auto pump = [&](int frames) {
+        for (int step = 0; step < frames; ++step) {
+            now += 30ms;
+            for (const auto& event : server.poll(now))
+                if (!legacy || kind(event) != GameMessage::AuthorityBatchHello) host.receive(event, now);
+            host.flush(now);
+            guest.pump(now);
+        }
+    };
+    server.memory.link(client.memory);
+    pump(8);
+    check(host.start(now), "start batch room");
+    constexpr ObjectId count = 128;
+    const auto initial = [](ObjectId id) -> Values { return id % 2 ? Values{Vector2{1, 2}, int32_t(9)} : Values{false}; };
+    const auto moved = [](ObjectId id) -> Values { return id % 2 ? Values{Vector2{3, 2}, int32_t(9)} : Values{true}; };
+    for (ObjectId id = 1; id <= count; ++id) check(host.world().spawn(id % 2 ? 1 : 2, host.local(), initial(id)) == id, "spawn batch object");
+    pump(15);
+    for (ObjectId id = 1; id <= count; ++id) check(host.writers().assign(id, guest.local(), host.tick()), "assign batch object");
+    pump(15);
+    for (ObjectId id = 1; id <= count; ++id) {
+        const auto* grant = guest.writers().grant(id);
+        check(grant && guest.writers().submit(id, grant->epoch, 1, moved(id)), "submit batch object");
+    }
+    now += 30ms;
+    guest.flush(now);
+    std::vector<Event> states;
+    for (auto& event : server.poll(now)) {
+        const auto type = kind(event);
+        if (type == GameMessage::AuthorityState || type == GameMessage::AuthorityStateWords || type == GameMessage::AuthorityStateBatch)
+            states.push_back(std::move(event));
+    }
+    check(legacy ? states.size() == count : states.size() > 1 && states.size() < count / 4, "batch negotiation or splitting");
+    if (!legacy) {
+        check(kind(states.back()) == GameMessage::AuthorityStateBatch && states.back().payload.size() + 1 <= game_payload_limit,
+              "batch framing fixture");
+        auto invalid = states.back();
+        invalid.payload.push_back(0);
+        host.receive(invalid, now);
+        check(host.writers().acceptances() == 0, "truncated batch committed its prefix");
+    }
+    for (const auto& event : states) {
+        check(event.payload.size() <= game_payload_limit, "batch exceeded game frame limit");
+        host.receive(event, now);
+    }
+    check(host.writers().acceptances() == count, "batch did not commit every sample");
+    std::size_t receipts = 0;
+    for (const auto& event : client.poll(now)) {
+        const auto type = kind(event);
+        if (type == GameMessage::AuthorityAck || type == GameMessage::AuthorityAckBatch) {
+            check(type == (legacy ? GameMessage::AuthorityAck : GameMessage::AuthorityAckBatch), "wrong ACK form");
+            if (!legacy && !receipts) {
+                auto invalid = event;
+                invalid.payload.push_back(0);
+                guest.receive(invalid, now);
+                for (ObjectId id = 1; id <= count; ++id)
+                    check(guest.writers().grant(id)->confirmed == 0, "truncated ACK advanced its prefix");
+            }
+            ++receipts;
+        }
+        guest.receive(event, now);
+    }
+    check(receipts == states.size(), "state and receipt message counts differ");
+    for (ObjectId id = 1; id <= count; ++id)
+        check(host.object(id)->values == moved(id) && guest.writers().grant(id)->confirmed == 1,
+              "batch state or ACK value ignored");
 }
 
 void test_grant_replication_baseline() {
@@ -533,12 +1092,21 @@ void test_grant_replication_baseline() {
 
 int main() try {
     test_gameplay_methods();
+    test_replica_write_layout();
     test_time();
     test_multiple_models();
+    test_timed_input_scheduling();
     test_rpc_outcomes();
     test_compact();
     test_anchor_recovery();
+    test_native_rpc_before_roster();
     test_word_authority();
+    test_spatial_writer_interest(false);
+    test_spatial_writer_interest(true);
+    test_spatial_subscription_rates(false);
+    test_spatial_subscription_rates(true);
+    test_authority_batch(false);
+    test_authority_batch(true);
     test_grant_replication_baseline();
     MemoryTransport h, a, b, late;
     SessionOptions options;

@@ -4,6 +4,7 @@
 
 #include <functional>
 #include <set>
+#include <unordered_map>
 
 namespace netcode {
 
@@ -62,11 +63,13 @@ public:
     void forget(ObjectId object);
     void unobserve(ObjectId object);
     bool supports(PlayerId player, SchemaId schema) const;
+    bool supports_claims(Peer peer) const { return claim_peers_.count(peer) != 0; }
 
     // Only the coordinator assigns writers. The outgoing remote writer's last
     // accepted recovery is retained automatically on revoke or direct transfer.
     bool assign(ObjectId object, PlayerId writer, Tick now, const Bytes& recovery = {}, Tick source_step = 0);
     const ObjectGrant* grant(ObjectId object) const;
+    PlayerId default_writer() const { return master_; }
     PlayerId writer(ObjectId object) const;
     bool submit(ObjectId object, std::uint32_t epoch, Tick source_step, Values values, Bytes recovery = {});
     bool overlay(Object& view) const;
@@ -92,8 +95,10 @@ public:
     void on_request(std::function<void(const Claim&)> callback) { prompt_ = std::move(callback); }
     void on_result(std::function<void(const Claim&, ClaimStatus)> callback) { result_ = std::move(callback); }
     bool request(ObjectId object);
+    bool request_coordinator(ObjectId object, Tick now);
     bool release(ObjectId object);
-    PlayerId presentation_writer(ObjectId id) const { return predicted_.count(id) ? local_ : writer(id); }
+    bool has_predicted_claim(ObjectId id) const { return predicted_.count(id) != 0; }
+    PlayerId presentation_writer(ObjectId id) const { return has_predicted_claim(id) ? local_ : writer(id); }
     bool submit_predicted(ObjectId id, Tick step, Values values, Bytes recovery = {});
     void on_prediction_failed(std::function<void(ObjectId)> callback) { prediction_failed_ = std::move(callback); }
     bool answer(const Claim& claim, bool accept, Tick now);
@@ -102,6 +107,11 @@ public:
     std::uint64_t acceptances() const { return acceptances_; }
 
 private:
+    friend class ScriptGame;
+    bool submit_scene_sample(ObjectId id, std::uint32_t epoch, const Values& values);
+    template<class Sample>
+    bool submit_values(ObjectId id, std::uint32_t epoch, Tick step, Sample&& values, Bytes recovery);
+
     struct Model {
         std::vector<std::size_t> slots;
         std::vector<Field> fields;
@@ -114,17 +124,25 @@ private:
         PlayerId player;
         bool offered = false;
         std::map<SchemaId, std::uint32_t> models;
-        std::map<ObjectId, std::uint32_t> delivered;
+        std::unordered_map<ObjectId, std::uint32_t> delivered;
         Tick last_request = 0;
         bool writable = true;
+        bool state_batches = false;
+    };
+    struct ReceiveBuffers {
+        AuthoritySample sample;
+        Words words;
+        Values merged;
     };
     static void encode_sample(Writer& out, const AuthoritySample& sample);
     static bool decode_sample(Reader& in, const Model& model, AuthoritySample& sample);
     static void merge(const Model& model, const Values& fields, Values& target);
     void notify(const ObjectGrant& grant);
     void receive_grant(Reader& in);
-    void receive_state(Peer peer, Reader& in, Tick now, bool delta);
-    void send_ack(Peer peer, const ObjectGrant& grant);
+    void receive_state(Peer peer, PlayerId player, Reader& in, Tick now, bool delta, Writer* receipts = nullptr);
+    void receive_state_batch(Peer peer, PlayerId player, Reader in, Tick now);
+    void receive_ack(Reader& in);
+    GameMessage encode_state(Writer& out, Writer& delta, const ObjectGrant& grant);
     bool send_request(ObjectId object, bool release);
     void receive_claim(Peer peer, GameMessage type, Reader& in, Tick now);
     void maintain_claims(Tick now);
@@ -133,11 +151,14 @@ private:
     Peer peer_for(PlayerId player) const;
 
     friend class CheckpointCodec;
+    friend class GameSession;
     PlayerId master_ = host_player;
     Transport& link_;
     const Schemas& schemas_;
     Lookup lookup_;
     Commit commit_;
+    std::function<bool(ObjectId, const Values&, Tick, const Words&)> commit_words_;
+    std::function<void(ObjectId, PlayerId)> spatial_writer_changed_;
     Changed changed_;
     Known known_;
     InstanceMode instance_mode_;
@@ -148,8 +169,12 @@ private:
     bool reply_pending_ = false;
     bool word_deltas_ = false;
     std::optional<Tick> word_state_probe_;
+    bool state_batches_ = false;
+    std::optional<Tick> state_batch_probe_;
     std::map<ObjectId, WordState> writable_words_;
+    std::map<ObjectId, Words> accepted_words_;
     Words sampled_words_;
+    ReceiveBuffers receive_buffers_;
     std::uint64_t submissions_ = 0, acceptances_ = 0;
     std::map<SchemaId, Model> models_;
     std::map<ObjectId, ObjectGrant> grants_;

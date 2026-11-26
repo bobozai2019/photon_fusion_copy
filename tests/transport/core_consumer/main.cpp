@@ -18,6 +18,7 @@ void check(bool result, const char* detail) {
 class Limited final : public Transport {
 public:
     bool supports_backpressure() const override { return true; }
+    bool reliable_ordered(Lane) const override { return true; }
     bool send(Peer, Lane, const Bytes&) override { throw std::logic_error("Expected one batch call"); }
     BatchResult send_batch(Peer peer, Lane lane, const Bytes* const* messages, size_t count) override {
         check(peer == 4, "Wrong recipient");
@@ -47,12 +48,15 @@ void test_outbound() {
         check(out.send(4, Lane::Game, {2, 9}), "Stage RPC");
         out.send_messages(4, Lane::Game, {{4, 5}, {6, 7}});
         check(out.send(4, Lane::Control, {11}), "Stage control");
+        check(out.admit_snapshot(4), "Collecting messages without transport backpressure");
         check(link.attempts.empty(), "Batch escaped before flush");
         link.slots = 1;
         out.flush(TimePoint{} + 2ms);
     }
     check(out.traffic().queued_bytes == 5 && out.traffic().oldest_queued_us == 1000, "Pending statistics");
     check(link.attempts == decltype(link.attempts){{Lane::Game, 3}}, "Grouped Game messages");
+    check(!out.admit_snapshot(4) && out.traffic().snapshot_backpressure_skips == 1,
+          "Partial acceptance blocks another snapshot offer");
     out.close(4);
     check(!link.closed && !out.send(4, Lane::Control, {12}), "Close must wait behind queue");
     link.slots = 32;
@@ -107,6 +111,19 @@ void test_memory_contract() {
     std::cout << "Memory contract: Open, Control[00ff][a1], Game[1a0001], Remote Closed, new peer on reconnect\n";
 }
 
+void test_snapshot_admission() {
+    Limited link;
+    Outbound out(link);
+    const auto start = TimePoint{} + 1ms;
+    out.poll(start);
+    check(out.admit_snapshot(4), "New peer has no pending backpressure");
+    check(out.send(4, Lane::Game, {42}) && !out.admit_snapshot(4), "Immediate block stages a retry");
+    link.slots = 1;
+    out.poll(start + 1ms);
+    check(out.admit_snapshot(4) && out.traffic().queued_bytes == 0 &&
+          link.sent == decltype(link.sent){{Lane::Game, {42}}}, "Snapshot offers resume after ordered drain");
+}
+
 void test_memory_session() {
     MemoryTransport a, b;
     a.link(b);
@@ -138,6 +155,7 @@ void test_memory_session() {
 
 int main() try {
     test_outbound();
+    test_snapshot_admission();
     test_memory_contract();
     test_memory_session();
 } catch (const std::exception& error) {

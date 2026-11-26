@@ -194,6 +194,45 @@ def tcp_poll_burst(api):
     print("TCP: one poll drains a 48 KiB send burst with intact frames")
 
 
+def tcp_mixed_batch(api):
+    with endpoint() as (address, text), Instance(api, LISTEN, text) as host:
+        with socket.create_connection(address, timeout=3) as raw:
+            wait([host], lambda: len(host.events) == 1)
+            peer = host.events[0][1]
+            expected = bytearray()
+            totals = [0, 0]
+            for group in range(4):
+                games = (b"", *(bytes([group, index, 0, 255]) * (220 + index) for index in range(20)))
+                control = (bytes([group, 0, 255]) * 10921,)
+                for lane, payloads in ((GAME, games), (CONTROL, control)):
+                    assert host.send(peer, lane, *payloads) == (OK, len(payloads))
+                    for payload in payloads:
+                        totals[lane] += len(payload)
+                        expected.extend(frame(lane, payload))
+
+            # The burst crosses the per-poll byte budget within a frame.
+            host.poll()
+            pending = host.stats(peer)
+            assert sum(lane.sent for lane in pending) > 0 and sum(lane.queued for lane in pending) > 0
+            assert [lane.sent + lane.queued for lane in pending] == totals
+            assert host.close(peer) == OK
+
+            received = bytearray()
+            deadline = time.monotonic() + 5
+            raw.setblocking(False)
+            while len(received) < len(expected) or len(host.events) < 2:
+                assert time.monotonic() < deadline
+                host.poll(budget=1)
+                try:
+                    received.extend(raw.recv(65536))
+                except BlockingIOError:
+                    time.sleep(0.001)
+
+            assert received == expected and host.events[-1] == (CLOSED, peer, CONTROL, b"", LOCAL)
+            assert [(lane.sent, lane.queued) for lane in host.stats()] == [(n, 0) for n in totals]
+    print("TCP: mixed lanes across send batches and poll budgets, frame bytes and close order verified")
+
+
 def tcp_raw(api):
     with endpoint() as (address, text), Instance(api, LISTEN, text) as host:
         with socket.create_connection(address, timeout=3) as raw:
@@ -249,6 +288,7 @@ def main(path):
     assert api.open(c.byref(invalid), c.byref(handle)) == INVALID_CONFIG and not handle
     tcp_clients(api)
     tcp_poll_burst(api)
+    tcp_mixed_batch(api)
     tcp_raw(api)
 
 

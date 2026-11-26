@@ -2,6 +2,7 @@
 #include "session/migration.hpp"
 #include "state/layout.hpp"
 #include <optional>
+#include <unordered_map>
 
 namespace netcode {
 
@@ -50,6 +51,16 @@ class ScriptGame {
     int sync_replica(ObjectId id,const Values& sample,Values& applied,bool forecast=false);
     // Returns changed observer values in mask order, or a full baseline on rebind.
     int receive_replica(ObjectId id, Values& applied, std::uint64_t& mask);
+    enum class ReplicaRole { Observer, Writer, PendingCreator };
+    struct ReplicaUpdateView {
+        const Values* values = nullptr;
+        std::uint64_t mask = 0;
+        bool baseline = false;
+        ReplicaRole role = ReplicaRole::Observer;
+    };
+    // Values use schema order. Consume synchronously before changing this session.
+    ReplicaUpdateView receive_replica_view(ObjectId id);
+    ReplicaUpdateView receive_native_replica_view(ObjectId id);
     void unbind_replica(ObjectId id) { replicas_.erase(id); }
     bool submit_fields(ObjectId id,const Values& full);
     bool submit(ObjectId id, const Values& fields);
@@ -58,6 +69,7 @@ class ScriptGame {
     }
     bool read(ObjectId id, bool presentation, Values& out);
     bool decode(SchemaId schema, bool model_only, const Bytes& encoded, Values& values) const;
+    void set_snapshot_change_events(bool enabled) { snapshot_change_events_ = enabled; }
     std::deque<ScriptEvent> take_events();
     bool distribute(ObjectId object, InterestKind kind, const std::vector<uint64_t>& keys, int divisor);
     bool subscribe(PlayerId player, InterestKind kind, const std::vector<uint64_t>& keys, const std::vector<int>& rates);
@@ -73,6 +85,7 @@ class ScriptGame {
     void pop_rpc() { calls_.pop_front(); }
 
   private:
+    ReplicaUpdateView receive_replica_view(ObjectId id, bool check_pending_creator);
     struct ReplicaCursor {
         RoundId round;
         PlayerId writer;
@@ -80,7 +93,7 @@ class ScriptGame {
         Values previous;
         std::optional<Tick> received_revision = std::nullopt;
     };
-    std::map<ObjectId,ReplicaCursor> replicas_;
+    std::unordered_map<ObjectId, ReplicaCursor> replicas_;
     struct Signature { SchemaId schema; uint32_t hash; };
     std::map<std::string,MethodId> method_names_;
     std::map<MethodId,Signature> signatures_;
@@ -93,7 +106,13 @@ class ScriptGame {
     ClockDiscipline discipline_ = ClockDiscipline::Monotonic;
     uint32_t term_ = 1;
     Schemas schemas_;
-    std::map<SchemaId, std::vector<Field>> writable_;
+    struct WriteLayout {
+        std::vector<Field> fields;
+        std::vector<std::size_t> writable_indices;
+        std::vector<std::size_t> read_only_indices;
+    };
+    std::map<SchemaId, WriteLayout> write_layouts_;
+    bool snapshot_change_events_ = true;
     std::deque<ScriptEvent> events_;
     std::deque<RpcCall> calls_;
     std::unique_ptr<MigratingSession> runtime_;

@@ -7,6 +7,8 @@
 #include "state/snapshot_codec.hpp"
 #include "session/object_authority.hpp"
 #include "session/outbound.hpp"
+#include "session/room_properties.hpp"
+#include "session/native_rpc.hpp"
 
 namespace netcode {
 
@@ -19,6 +21,7 @@ struct SessionOptions {
     bool compact = true;
     uint32_t term = 1;
     ClockDiscipline clock_discipline = ClockDiscipline::Monotonic;
+    bool retain_spatial_writer_interest = false;
 };
 
 // Single-threaded engine entry point. The caller owns the transport and can
@@ -41,11 +44,29 @@ class GameSession {
     std::uint32_t term() const { return term_; }
     RoomId room() const;
     Tick tick() const { return tick_; }
+    std::chrono::milliseconds step() const { return options_.step; }
     const Object* object(ObjectId id) const;
     std::vector<ObjectId> objects() const;
     AppliedSnapshot scene_ready(SceneId scene, bool ready);
     RoomHost* host() { return host_ ? &*host_ : nullptr; }
     RoomGuest* guest() { return guest_ ? &*guest_ : nullptr; }
+    RoomProperties& room_properties() { return properties_; }
+    bool set_room_properties(const RoomProperties::Values& patch, const RoomProperties::Values& expected = {}) {
+        return properties_.set(*this, link_, patch, expected);
+    }
+    bool subscribe_local(InterestKind kind, const std::set<uint64_t>& keys) {
+        return properties_.subscribe(*this, link_, uint8_t(kind), keys);
+    }
+    bool subscribe_local_area_rates(const RoomProperties::AreaRates& rates) {
+        return properties_.subscribe_area_rates(*this, link_, rates);
+    }
+    NativeRpc& native_rpc() { return native_rpc_; }
+    bool send_native_rpc(ObjectId id, int32_t target, uint32_t token, const Bytes& data, bool sender_handled = false) {
+        return native_rpc_.send(*this, link_, id, target, token, data, sender_handled);
+    }
+    void finish_native_rpc(uint32_t receipt, bool delivered) {
+        native_rpc_.finish(*this, link_, receipt, delivered);
+    }
     const SnapshotCodec* codec(Peer peer) const;
     Rpc& rpc() { return rpc_; }
     std::function<void(const RpcCall&)> on_rpc;
@@ -85,6 +106,8 @@ class GameSession {
     RoomListing listing_;
     std::optional<RoomHost> host_;
     std::optional<RoomGuest> guest_;
+    RoomProperties properties_;
+    NativeRpc native_rpc_;
     Schemas schemas_;
     AuthorityState state_;
     ReplicaState replica_;

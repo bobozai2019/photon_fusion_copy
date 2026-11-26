@@ -48,13 +48,16 @@ public:
 
     using Known = std::function<bool(Peer, ObjectId)>;
     using WriterLookup = std::function<std::optional<RpcWriter>(ObjectId)>;
-    Rpc(Transport& transport, bool host, Owner owner, Handler handle, Known known = {}, WriterLookup writer = {});
+    using Destroyed = std::function<bool(ObjectId)>;
+    Rpc(Transport& transport, bool host, Owner owner, Handler handle, Known known = {}, WriterLookup writer = {},
+        Destroyed destroyed = {});
     void allow_cancel(Peer peer) { if (peers_.count(peer)) cancellable_.insert(peer); }
     std::deque<RpcOutcome> take_outcomes();
     bool register_method(Method method);
     void reset(RoomId room, RoundId round, PlayerId local, PlayerId master = host_player);
     void attach(Peer peer, PlayerId player);
     void detach(Peer peer);
+    void forget(ObjectId object);
     bool invoke(ObjectId object, MethodId method, const Bytes& args = {}, PlayerId target = 0, std::uint64_t token = 0);
     void receive(Peer peer, GameMessage type, Reader& payload);
     void update(TimePoint now);
@@ -62,7 +65,7 @@ public:
     std::size_t peak_queued() const { return peak_; }
 
 private:
-    using Channel = std::pair<Peer, ObjectId>;
+    using Channel = std::pair<ObjectId, Peer>;
     struct Pending { Bytes bytes; std::uint64_t token; MethodId method; unsigned attempts = 0; bool cancelled = false; };
     struct Outgoing {
         std::uint32_t next = 1;
@@ -87,6 +90,7 @@ private:
     WriterLookup writer_;
     Handler handle_;
     Known known_;
+    Destroyed destroyed_;
     std::set<Peer> cancellable_;
     std::deque<RpcOutcome> outcomes_;
     RoomId room_ = 0;

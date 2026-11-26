@@ -84,6 +84,7 @@ private:
     RoomPhase phase_ = RoomPhase::Waiting;
     friend class CheckpointCodec;
     std::map<PlayerId, Member> members_;
+    std::map<Peer, TimePoint> joining_;
     std::deque<RoomMessage> messages_;
 };
 
