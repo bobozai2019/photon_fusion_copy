@@ -128,7 +128,11 @@ void test_snapshot_admission() {
     link.events.push_back({EventType::Open, 7});
     out.poll(start + 2ms);
     const auto healthy_budget = out.snapshot_packet_budget(7);
+    check(healthy_budget == Outbound::snapshot_packets_per_step && out.snapshot_packet_budget(7, 8) == healthy_budget + 8,
+          "Writer ACK allowance preserves the snapshot limit on an idle connection");
     link.slow_peer.queued_bytes = 60 * 1024;
+    check(out.snapshot_packet_budget(4, 8) == out.snapshot_packet_budget(4),
+          "ACKs and snapshots share the same queue space under pressure");
     check(out.snapshot_packet_budget(4) > 0 && out.snapshot_packet_budget(4) < healthy_budget,
           "Provider backlog shrinks the budget before it blocks");
     link.slow_peer.oldest_queued_us = 60'000;
@@ -171,6 +175,120 @@ void test_snapshot_budget_rotation() {
     check(replica.objects().at(1).values == Values{int32_t(999)}, "The cursor wraps to the updated prefix");
 }
 
+class MeasuredLink final : public Transport {
+public:
+    std::vector<Event> poll(TimePoint now) override { return memory.poll(now); }
+    bool send(Peer peer, Lane lane, const Bytes& payload) override {
+        if (lane == Lane::Game && !payload.empty()) {
+            if (payload[0] == uint8_t(GameMessage::AuthorityAckBatch)) ++ack_packets;
+            if (payload[0] == uint8_t(GameMessage::Snapshot)) ++snapshots;
+            if (payload[0] == uint8_t(GameMessage::AuthorityState) ||
+                payload[0] == uint8_t(GameMessage::AuthorityStateWords) ||
+                payload[0] == uint8_t(GameMessage::AuthorityStateBatch)) {
+                ++writer_packets;
+                writer_bytes += payload.size();
+            }
+        }
+        return memory.send(peer, lane, payload);
+    }
+    void close(Peer peer) override { memory.close(peer); }
+    bool reliable_ordered(Lane) const override { return true; }
+    bool supports_backpressure() const override { return true; }
+    Traffic traffic() const override { return memory.traffic(); }
+    Traffic peer_traffic(Peer) const override {
+        Traffic available;
+        available.queued_bytes = sampled_queued_bytes;
+        return available;
+    }
+    MemoryTransport memory;
+    std::size_t sampled_queued_bytes = 0;
+    unsigned ack_packets = 0, snapshots = 0, writer_packets = 0, writer_bytes = 0;
+};
+
+void test_shared_state_budget() {
+    MeasuredLink server, client;
+    Schemas schemas;
+    schemas.add({1, 1, {{1, FieldType::Int}}});
+    SessionOptions options;
+    options.room = 409;
+    options.host = true;
+    options.admission = {2, true, true};
+    options.compact = false;
+    GameSession host(server, options, schemas);
+    options.host = false;
+    GameSession guest(client, options, schemas);
+    for (auto* game : {&host, &guest}) check(game->writers().register_model(1, 1, {1}), "writer model");
+    server.memory.link(client.memory);
+    TimePoint now{};
+    const auto pump = [&](int count) {
+        for (int i = 0; i < count; ++i) {
+            now += 30ms;
+            host.pump(now);
+            guest.pump(now);
+        }
+    };
+    pump(8);
+    check(host.start(now), "start");
+    constexpr ObjectId writers = 128;
+    for (ObjectId id = 1; id <= writers; ++id) {
+        check(host.world().spawn(1, host.local(), {int32_t(0)}) == id, "create writer");
+    }
+    const auto observed = host.world().spawn(1, host.local(), {int32_t(0)});
+    pump(18);
+    for (ObjectId id = 1; id <= writers; ++id) {
+        check(host.writers().assign(id, guest.local(), host.tick()), "delegate");
+    }
+    pump(18);
+    check(guest.object(observed) && guest.object(observed)->values == Values{int32_t(0)}, "baseline");
+    server.sampled_queued_bytes = 64300; // 1236 bytes free, one full-size admission quantum.
+    const auto ack_start = server.ack_packets;
+    const auto snapshot_start = server.snapshots;
+    const auto soft_start = host.traffic().snapshot_soft_skips;
+    for (int32_t v = 1; v <= 30; ++v) {
+        const auto step = guest.tick() + 1;
+        for (ObjectId id = 1; id <= writers; ++id) {
+            const auto* g = guest.writers().grant(id);
+            check(g && guest.writers().submit(id, g->epoch, step, {v}), "submit state");
+        }
+        check(host.authority().capture(observed, {v}, host.tick() + 1), "update host property");
+        now += 30ms;
+        guest.flush(now);
+        host.pump(now);
+        guest.pump(now);
+    }
+    const auto acks = server.ack_packets - ack_start;
+    const auto snapshots = server.snapshots - snapshot_start;
+    check(acks == 15 && snapshots == 15 && host.traffic().snapshot_soft_skips == soft_start,
+          "The single available packet alternates between ACK and snapshot without exceeding the budget");
+    check(std::get<int32_t>(guest.object(observed)->values[0]) > 0,
+          "The host object progresses while writer ACKs compete for the budget");
+    server.sampled_queued_bytes = 0;
+    pump(5);
+    check(guest.object(observed)->values == Values{int32_t(30)}, "Latest state converges after pressure");
+
+    server.sampled_queued_bytes = 65536;
+    const auto sent_before = client.writer_packets;
+    const auto bytes_before = client.writer_bytes;
+    const auto applied_before = host.writers().acceptances();
+    const auto coalesced_before = host.traffic().authority_ack_coalesces;
+    for (ObjectId id = 1; id <= writers; ++id) {
+        const auto* g = guest.writers().grant(id);
+        check(g && guest.writers().submit(id, g->epoch, guest.tick() + 1, {int32_t(99)}), "single final sample");
+    }
+    pump(31);
+    check(client.writer_packets - sent_before <= 18 && client.writer_bytes - bytes_before < 20 * 1024,
+          "An admitted revision waits for its reliable retry interval");
+    check(host.writers().acceptances() - applied_before == writers, "Each change applies once");
+    check(host.traffic().authority_ack_coalesces > coalesced_before, "Application ACK retries still occur");
+    server.sampled_queued_bytes = 0;
+    pump(10);
+    for (ObjectId id = 1; id <= writers; ++id) {
+        const auto* grant = guest.writers().grant(id);
+        check(grant->confirmed == grant->sample.sequence && host.object(id)->values == Values{int32_t(99)},
+              "Latest writer state and ACK converge for every object");
+    }
+}
+
 void test_memory_session() {
     MemoryTransport a, b;
     a.link(b);
@@ -204,6 +322,7 @@ int main() try {
     test_outbound();
     test_snapshot_admission();
     test_snapshot_budget_rotation();
+    test_shared_state_budget();
     test_memory_contract();
     test_memory_session();
 } catch (const std::exception& error) {

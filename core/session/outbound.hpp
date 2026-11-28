@@ -14,8 +14,8 @@ public:
     explicit Outbound(std::unique_ptr<Transport> link);
     bool send(Peer peer, Lane lane, const Bytes& payload) override;
     void send_messages(Peer peer, Lane lane, std::vector<Bytes> messages);
-    std::size_t state_packet_budget(Peer peer) const;
-    std::size_t snapshot_packet_budget(Peer peer);
+    static constexpr std::size_t snapshot_packets_per_step = 32 * 1024 / game_payload_limit;
+    std::size_t snapshot_packet_budget(Peer peer, std::size_t receipt_slots = 0);
     void snapshot_budget_yield() { ++snapshot_budget_yields_; }
     void close(Peer peer) override;
     std::vector<Event> poll(TimePoint now) override;
@@ -46,6 +46,7 @@ private:
         std::optional<TimePoint> close_started;
         bool blocked = false;
     };
+    std::size_t state_packet_budget(Peer peer, std::size_t max_packets) const;
     bool can_queue(const Stream& stream, Lane lane, std::size_t size) const;
     void queue(Stream& stream, Lane lane, Bytes payload);
     void submit(Peer peer, Stream& stream);

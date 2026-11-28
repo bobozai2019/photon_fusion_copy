@@ -4,6 +4,8 @@
 
 namespace netcode {
 namespace {
+constexpr double probe_timeout = 2.0;
+
 double elapsed(TimePoint end, TimePoint start) { return std::chrono::duration<double>(end - start).count(); }
 }
 
@@ -34,7 +36,8 @@ void NetworkClock::update(TimePoint local) {
 }
 
 bool NetworkClock::probe_due(TimePoint local) {
-    if (host_ || (sequence_ && elapsed(local, sent_) < (synchronized_ ? 1.0 : .25)))
+    const double interval = outstanding_ ? probe_timeout : synchronized_ ? 1.0 : .25;
+    if (host_ || (sequence_ && elapsed(local, sent_) < interval))
         return false;
     sent_ = local;
     if (!++sequence_)
@@ -49,7 +52,7 @@ bool NetworkClock::sample(std::uint32_t sequence, TimePoint local, double host_s
         return false;
     outstanding_ = false;
     const auto latency = elapsed(local, sent_);
-    if (latency > 2)
+    if (latency > probe_timeout)
         return false;
     update(local);
     const auto sample_offset = host_seconds + latency / 2 - elapsed(local, origin_);

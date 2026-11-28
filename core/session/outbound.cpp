@@ -13,7 +13,6 @@ constexpr std::size_t game_message_budget = 2048;
 constexpr std::size_t control_message_reserve = 128;
 constexpr std::size_t max_batch = 64;
 constexpr std::size_t snapshot_window = 64 * 1024;
-constexpr std::size_t snapshot_per_flush = 32 * 1024;
 constexpr std::uint64_t snapshot_max_queue_age_us = 50'000;
 constexpr auto close_grace = std::chrono::seconds(3);
 
@@ -84,7 +83,7 @@ void Outbound::send_messages(Peer peer, Lane lane, std::vector<Bytes> messages) 
     }
 }
 
-std::size_t Outbound::state_packet_budget(Peer peer) const {
+std::size_t Outbound::state_packet_budget(Peer peer, std::size_t max_packets) const {
     if (!backpressure_ || !reliable_ordered(Lane::Game))
         return std::numeric_limits<std::size_t>::max();
     const auto found = peers_.find(peer);
@@ -97,13 +96,13 @@ std::size_t Outbound::state_packet_budget(Peer peer) const {
     if (queued > snapshot_window - game_payload_limit ||
         std::max(provider.oldest_queued_us, static_cast<std::uint64_t>(core_age)) >= snapshot_max_queue_age_us ||
         stream.queued.size() >= game_message_budget) return 0;
-    return std::min({snapshot_per_flush / game_payload_limit,
+    return std::min({max_packets,
                      (snapshot_window - queued) / game_payload_limit,
                      game_message_budget - stream.queued.size()});
 }
 
-std::size_t Outbound::snapshot_packet_budget(Peer peer) {
-    const auto budget = state_packet_budget(peer);
+std::size_t Outbound::snapshot_packet_budget(Peer peer, std::size_t receipt_slots) {
+    const auto budget = state_packet_budget(peer, snapshot_packets_per_step + receipt_slots);
     if (!budget) {
         const auto found = peers_.find(peer);
         if (found != peers_.end() && !found->second.close_started) {

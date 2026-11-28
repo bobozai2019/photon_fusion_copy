@@ -1,7 +1,6 @@
 #include "session/object_authority.hpp"
-#include "session/outbound.hpp"
-
 #include <algorithm>
+#include <array>
 #include <utility>
 
 namespace netcode {
@@ -434,32 +433,44 @@ void ObjectAuthority::receive_state_batch(Peer peer, Participant& participant, R
     }
 }
 
-void ObjectAuthority::flush_receipts(Outbound& link)
+std::size_t ObjectAuthority::initial_receipt_budget(Peer peer, std::size_t available)
 {
-    constexpr std::size_t max_packets = 8;
-    for (auto& [peer, participant] : peers_) {
-        auto& receipts = participant.receipts;
-        if (receipts.empty()) continue;
-        auto budget = std::min(max_packets, link.state_packet_budget(peer));
-        while (budget && !receipts.empty()) {
-            auto first = receipts.upper_bound(participant.receipt_cursor);
-            if (first == receipts.end()) first = receipts.begin();
-            auto next = first;
-            ObjectId last = first->first;
-            auto packet = game_packet(GameMessage::AuthorityAckBatch, room_, round_);
-            while (next != receipts.end() && packet.bytes().size() + receipt_size <= game_payload_limit) {
-                const auto& [object, receipt] = *next++;
-                packet.u32(object);
-                packet.u32(receipt.epoch);
-                packet.u32(receipt.sequence);
-                last = object;
-            }
-            if (!link.send(peer, Lane::Game, packet.bytes())) break;
-            receipts.erase(first, next);
-            participant.receipt_cursor = last;
-            --budget;
+    const auto found = peers_.find(peer);
+    if (!available || found == peers_.end() || found->second.receipts.empty()) return 0;
+    if (available > 1) return std::min(max_receipt_packets, available - 1);
+    auto& first = found->second.receipt_first;
+    const bool receipt_first = first;
+    first = !first;
+    return receipt_first ? 1 : 0;
+}
+
+std::size_t ObjectAuthority::flush_receipts(Peer peer, std::size_t budget)
+{
+    if (!budget) return 0;
+    const auto found = peers_.find(peer);
+    if (found == peers_.end()) return 0;
+    auto& participant = found->second;
+    auto& receipts = participant.receipts;
+    std::size_t sent = 0;
+    while (sent < budget && !receipts.empty()) {
+        auto first = receipts.upper_bound(participant.receipt_cursor);
+        if (first == receipts.end()) first = receipts.begin();
+        auto next = first;
+        ObjectId last = first->first;
+        auto packet = game_packet(GameMessage::AuthorityAckBatch, room_, round_);
+        while (next != receipts.end() && packet.bytes().size() + receipt_size <= game_payload_limit) {
+            const auto& [object, receipt] = *next++;
+            packet.u32(object);
+            packet.u32(receipt.epoch);
+            packet.u32(receipt.sequence);
+            last = object;
         }
+        if (!link_.send(peer, Lane::Game, packet.bytes())) break;
+        receipts.erase(first, next);
+        participant.receipt_cursor = last;
+        ++sent;
     }
+    return sent;
 }
 
 void ObjectAuthority::receive_ack(Reader& in)
@@ -593,7 +604,7 @@ GameMessage ObjectAuthority::encode_state(Writer& out, Writer& delta, const Obje
     return GameMessage::AuthorityState;
 }
 
-void ObjectAuthority::flush(Tick now, AuthorityState* replicas)
+void ObjectAuthority::flush(Tick now, AuthorityState* replicas, Tick retry_ticks)
 {
     if (!room_ || !round_ || !local_) return;
     local_step_ = now;
@@ -650,13 +661,23 @@ void ObjectAuthority::flush(Tick now, AuthorityState* replicas)
         reply_pending_ = !link_.send(coordinator_, Lane::Control, reply.bytes());
     }
     Writer delta, record, packet;
+    std::array<ObjectGrant*, game_payload_limit / 18> offered;
+    std::size_t offers = 0;
     const auto flush_batch = [&] {
         if (packet.bytes().empty()) return;
-        link_.send(coordinator_, Lane::Game, packet.bytes());
+        if (link_.send(coordinator_, Lane::Game, packet.bytes())) {
+            for (std::size_t i = 0; i < offers; ++i) {
+                auto& grant = *offered[i];
+                grant.offered_sequence = grant.sample.sequence;
+                grant.offered_at = now;
+            }
+        }
+        offers = 0;
         packet.clear();
     };
-    for (const auto& [id, g] : grants_) {
+    for (auto& [id, g] : grants_) {
         if (g.writer != local_ || g.confirmed == g.sample.sequence || !lookup_(id)) continue;
+        if (retry_ticks && g.offered_sequence == g.sample.sequence && now - g.offered_at < retry_ticks) continue;
         record.clear();
         const auto type = encode_state(record, delta, g);
         const auto length = record.bytes().size();
@@ -667,10 +688,12 @@ void ObjectAuthority::flush(Tick now, AuthorityState* replicas)
             const auto flags = type == GameMessage::AuthorityStateWords ? batch_word_flag : 0;
             packet.u16(static_cast<std::uint16_t>(length | flags));
             packet.append(record.bytes());
+            if (retry_ticks) offered[offers++] = &g;
         } else {
             flush_batch();
             write_game_header(packet, type, room_, round_);
             packet.append(record.bytes());
+            if (retry_ticks) offered[offers++] = &g;
             flush_batch();
         }
     }

@@ -12,6 +12,7 @@ class NetworkClock {
     void reset(TimePoint local, bool host, double step_seconds, ClockDiscipline discipline = ClockDiscipline::Monotonic);
     void update(TimePoint local);
     bool probe_due(TimePoint local);
+    void probe_not_sent() { outstanding_ = false; }
     std::uint32_t sequence() const { return sequence_; }
     bool sample(std::uint32_t sequence, TimePoint local, double host_seconds);
     double seconds() const { return estimate_; }

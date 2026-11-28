@@ -142,6 +142,19 @@ void test_time() {
           "initial clock probe");
     check(std::abs(clock.rtt() - .08) < .00001 && std::abs(clock.seconds() - 10.08) < .00001,
           "RTT and offset");
+    NetworkClock slow;
+    slow.reset(start, false, .03);
+    check(slow.probe_due(start) && !slow.probe_due(start + 250ms) && !slow.probe_due(start + 500ms),
+          "keep the outstanding initial probe on a slow path");
+    check(slow.sample(slow.sequence(), start + 600ms, .3) && slow.synchronized(),
+          "first clock sample converges at 600 ms RTT");
+    slow.reset(start, false, .03);
+    check(slow.probe_due(start), "probe before loss");
+    const auto lost = slow.sequence();
+    check(!slow.probe_due(start + 1999ms) && slow.probe_due(start + 2s),
+          "a lost probe is replaced after the reply deadline");
+    check(!slow.sample(lost, start + 2100ms, .3) &&
+          slow.sample(slow.sequence(), start + 2600ms, 2.3), "stale probe cannot replace valid clock data");
     NetworkClock thresholds;
     thresholds.reset(start, false, .03, ClockDiscipline::Threshold);
     check(thresholds.probe_due(start) && thresholds.sample(thresholds.sequence(),start+100ms,10.09),

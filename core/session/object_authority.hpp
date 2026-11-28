@@ -8,8 +8,6 @@
 
 namespace netcode {
 
-class Outbound;
-
 // Values are in the order of the model's registered field IDs. Recovery is
 // opaque model state required by the next writer, e.g. an integrator's velocity.
 struct AuthoritySample {
@@ -28,6 +26,7 @@ struct ObjectGrant {
     Tick committed_at = 0;
     Tick confirmed = 0;
     AuthoritySample sample;
+    Tick offered_sequence = 0, offered_at = 0;
 };
 
 enum class ClaimMode { Transaction, Dynamic, PlayerAttached, MasterClient, GameGlobal };
@@ -78,7 +77,7 @@ public:
     Object presentation(const Object& canonical);
     bool receive(const Event& event, Tick now);
     // Pass the snapshot sender so a published grant can fence its receiver's baseline.
-    void flush(Tick now = 0, AuthorityState* replicas = nullptr);
+    void flush(Tick now = 0, AuthorityState* replicas = nullptr, Tick retry_ticks = 0);
     bool negotiate_word_state(AuthorityState& state, Peer peer, GameMessage type, Reader& payload);
     void probe_word_state(Tick send_tick);
     bool allow_requests(SchemaId schema, ClaimPolicy policy);
@@ -138,6 +137,7 @@ private:
         bool state_batches = false;
         Receipts receipts{};
         ObjectId receipt_cursor = 0;
+        bool receipt_first = true;
     };
     struct ReceiveBuffers {
         AuthoritySample sample;
@@ -151,7 +151,9 @@ private:
     void receive_grant(Reader& in);
     void receive_state(Peer peer, PlayerId player, Reader& in, Tick now, bool delta, Receipts* receipts = nullptr);
     void receive_state_batch(Peer peer, Participant& participant, Reader in, Tick now);
-    void flush_receipts(Outbound& link);
+    static constexpr std::size_t max_receipt_packets = 8;
+    std::size_t initial_receipt_budget(Peer peer, std::size_t available);
+    std::size_t flush_receipts(Peer peer, std::size_t budget);
     void receive_ack(Reader& in);
     GameMessage encode_state(Writer& out, Writer& delta, const ObjectGrant& grant);
     bool send_request(ObjectId object, bool release);

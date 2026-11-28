@@ -331,32 +331,39 @@ void GameSession::flush(TimePoint now) {
     sent_tick_ = tick_;
     Outbound::Collect collect(link_);
     prediction_.flush();
+    // Reliable transport already retries delivery. Refresh a missing application ACK periodically,
+    // while keeping new revisions eligible on the next send step.
+    constexpr auto retry_window = std::chrono::milliseconds(200);
+    const auto retry_ticks = link_.reliable_ordered(Lane::Game)
+        ? static_cast<Tick>((retry_window - std::chrono::milliseconds(1)) / options_.step + 1) : 0;
     if (host_) {
-        writers_.flush_receipts(link_);
-        // A reliable lane already retries delivery. Keep a slower application retry for snapshots
-        // that could not be queued locally, and continue offering every new revision immediately.
-        constexpr auto retry_window = std::chrono::milliseconds(200);
-        const auto retry_ticks = link_.reliable_ordered(Lane::Game)
-            ? static_cast<Tick>((retry_window - std::chrono::milliseconds(1)) / options_.step + 1) : 0;
         for (const auto& [player, member] : host_->members()) {
             if (!member.peer)
                 continue;
             // Defer before encoding. The next offer uses current revisions against this peer's ACKs.
-            if (const auto budget = link_.snapshot_packet_budget(member.peer)) {
-                auto codec = codecs_.find(member.peer);
-                bool budget_yield = false;
-                auto packets = state_.packets(member.peer, room(), round(), tick_, retry_ticks, budget, &budget_yield);
-                if (budget_yield) link_.snapshot_budget_yield();
-                if (codec != codecs_.end())
-                    codec->second.encode_batch(packets, room(), round());
-                link_.send_messages(member.peer, Lane::Game, std::move(packets));
+            if (const auto budget = link_.snapshot_packet_budget(member.peer, ObjectAuthority::max_receipt_packets)) {
+                const auto first_receipts = writers_.flush_receipts(
+                    member.peer, writers_.initial_receipt_budget(member.peer, budget));
+                auto remaining = budget - first_receipts;
+                if (remaining) {
+                    auto codec = codecs_.find(member.peer);
+                    bool budget_yield = false;
+                    const auto snapshot_budget = budget == std::numeric_limits<std::size_t>::max()
+                        ? remaining : std::min(remaining, Outbound::snapshot_packets_per_step);
+                    auto packets = state_.packets(member.peer, room(), round(), tick_, retry_ticks, snapshot_budget, &budget_yield);
+                    remaining -= packets.size();
+                    if (budget_yield) link_.snapshot_budget_yield();
+                    if (codec != codecs_.end()) codec->second.encode_batch(packets, room(), round());
+                    link_.send_messages(member.peer, Lane::Game, std::move(packets));
+                }
+                writers_.flush_receipts(member.peer, std::min(remaining, ObjectAuthority::max_receipt_packets - first_receipts));
             }
             ready(member.peer);
         }
     } else if (clock_.probe_due(now)) {
         auto out = game_packet(GameMessage::ClockProbe, room(), round());
         out.u32(clock_.sequence());
-        link_.send(guest_->peer(), Lane::Game, out.bytes());
+        if (!link_.send(guest_->peer(), Lane::Game, out.bytes())) clock_.probe_not_sent();
     }
     if (guest_ && options_.compact && !codec_enabled_ && (!codec_probe_ || tick_ - *codec_probe_ >= 30)) {
         auto hello = game_packet(GameMessage::CodecHello, room(), round());
@@ -365,7 +372,7 @@ void GameSession::flush(TimePoint now) {
         codec_probe_ = tick_;
     }
     writers_.probe_word_state(tick_);
-    writers_.flush(tick_, &state_);
+    writers_.flush(tick_, &state_, retry_ticks);
     world_.flush();
     rpc_.update(now);
     link_.flush(now);
