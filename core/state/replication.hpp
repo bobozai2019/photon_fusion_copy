@@ -1,5 +1,6 @@
 #pragma once
 #include <functional>
+#include <limits>
 
 #include "session/game_wire.hpp"
 #include "state/value.hpp"
@@ -85,7 +86,9 @@ public:
     bool baseline_complete(Peer peer) const;
     bool known(Peer peer, ObjectId id) const;
     bool subscribes_to(Peer peer, const Distribution& distribution) const;
-    std::vector<Bytes> packets(Peer peer, RoomId room, RoundId round, Tick send_tick, Tick retry_ticks = 0);
+    std::vector<Bytes> packets(Peer peer, RoomId room, RoundId round, Tick send_tick, Tick retry_ticks = 0,
+                               std::size_t max_packets = std::numeric_limits<std::size_t>::max(),
+                               bool* budget_yield = nullptr);
     bool acknowledge(Peer peer, Reader& payload);
 
 private:
@@ -110,6 +113,7 @@ private:
             Tick revision = 0;
             bool ready = false;
         };
+        ObjectId snapshot_cursor = 0;
         std::map<ObjectId, Tick> baseline;
         std::unordered_map<ObjectId, Sent> sent;
         std::map<ObjectId, Receipt> ack;

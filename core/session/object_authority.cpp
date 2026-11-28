@@ -1,4 +1,5 @@
 #include "session/object_authority.hpp"
+#include "session/outbound.hpp"
 
 #include <algorithm>
 #include <utility>
@@ -138,6 +139,7 @@ void ObjectAuthority::detach(Peer peer, Tick now)
 void ObjectAuthority::forget(ObjectId object)
 {
     if (local_ != master_) removed_.insert(object);
+    else for (auto& [peer, participant] : peers_) participant.receipts.erase(object);
     unobserve(object);
 }
 
@@ -338,7 +340,7 @@ void ObjectAuthority::receive_grant(Reader& in)
     } else awaiting_object_.insert(id);
 }
 
-void ObjectAuthority::receive_state(Peer peer, PlayerId player, Reader& in, Tick now, bool delta, Writer* receipts)
+void ObjectAuthority::receive_state(Peer peer, PlayerId player, Reader& in, Tick now, bool delta, Receipts* receipts)
 {
     ObjectId id;
     std::uint32_t epoch;
@@ -407,7 +409,8 @@ void ObjectAuthority::receive_state(Peer peer, PlayerId player, Reader& in, Tick
         ++acceptances_;
     }
     if (receipts) {
-        write_receipt(*receipts, g);
+        if (!receipts->insert_or_assign(id, PendingReceipt{g.epoch, g.confirmed}).second)
+            ++receipt_coalesces_;
     } else {
         Writer ack;
         ack.reserve(game_header_size + receipt_size);
@@ -417,26 +420,46 @@ void ObjectAuthority::receive_state(Peer peer, PlayerId player, Reader& in, Tick
     }
 }
 
-void ObjectAuthority::receive_state_batch(Peer peer, PlayerId player, Reader in, Tick now)
+void ObjectAuthority::receive_state_batch(Peer peer, Participant& participant, Reader in, Tick now)
 {
-    // Verify boundaries before applying any record. An invalid object sample
-    // inside a correctly framed batch is still handled independently.
+    // Check all boundaries before applying any record from the batch.
     Reader scan = in, entry = in;
     bool delta;
-    std::size_t count = 0;
     while (!scan.done()) {
         if (!read_batched_state(scan, entry, delta)) return;
-        ++count;
     }
-    if (!count) return;
-    Writer receipts;
-    receipts.reserve(game_header_size + count * receipt_size);
-    write_game_header(receipts, GameMessage::AuthorityAckBatch, room_, round_);
     while (!in.done()) {
         if (!read_batched_state(in, entry, delta)) return;
-        receive_state(peer, player, entry, now, delta, &receipts);
+        receive_state(peer, participant.player, entry, now, delta, &participant.receipts);
     }
-    if (receipts.bytes().size() > game_header_size) link_.send(peer, Lane::Game, receipts.bytes());
+}
+
+void ObjectAuthority::flush_receipts(Outbound& link)
+{
+    constexpr std::size_t max_packets = 8;
+    for (auto& [peer, participant] : peers_) {
+        auto& receipts = participant.receipts;
+        if (receipts.empty()) continue;
+        auto budget = std::min(max_packets, link.state_packet_budget(peer));
+        while (budget && !receipts.empty()) {
+            auto first = receipts.upper_bound(participant.receipt_cursor);
+            if (first == receipts.end()) first = receipts.begin();
+            auto next = first;
+            ObjectId last = first->first;
+            auto packet = game_packet(GameMessage::AuthorityAckBatch, room_, round_);
+            while (next != receipts.end() && packet.bytes().size() + receipt_size <= game_payload_limit) {
+                const auto& [object, receipt] = *next++;
+                packet.u32(object);
+                packet.u32(receipt.epoch);
+                packet.u32(receipt.sequence);
+                last = object;
+            }
+            if (!link.send(peer, Lane::Game, packet.bytes())) break;
+            receipts.erase(first, next);
+            participant.receipt_cursor = last;
+            --budget;
+        }
+    }
 }
 
 void ObjectAuthority::receive_ack(Reader& in)
@@ -468,14 +491,15 @@ bool ObjectAuthority::receive(const Event& event, Tick now)
         auto peer = peers_.find(event.peer);
         if (peer == peers_.end()) return true;
         if (type == GameMessage::AuthorityState || type == GameMessage::AuthorityStateWords) {
-            receive_state(event.peer, peer->second.player, in, now, type == GameMessage::AuthorityStateWords);
+            receive_state(event.peer, peer->second.player, in, now, type == GameMessage::AuthorityStateWords,
+                          peer->second.state_batches ? &peer->second.receipts : nullptr);
         } else if (type == GameMessage::AuthorityBatchHello && in.done() && link_.reliable_ordered(Lane::Game)) {
             peer->second.state_batches = true;
             const auto reply = game_packet(GameMessage::AuthorityBatchSupported, room_, round_);
             link_.send(event.peer, Lane::Game, reply.bytes());
         } else if (type == GameMessage::AuthorityStateBatch && peer->second.state_batches &&
                    event.payload.size() <= game_payload_limit) {
-            receive_state_batch(event.peer, peer->second.player, in, now);
+            receive_state_batch(event.peer, peer->second, in, now);
         } else if (type == GameMessage::AuthorityModels && peer->second.offered) {
             std::uint16_t version, count;
             if (!in.u16(version) || version != protocol_version || !in.u16(count) || in.remaining() != count * 6u)

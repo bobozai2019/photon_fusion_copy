@@ -976,6 +976,17 @@ void test_authority_batch(bool legacy) {
         host.receive(event, now);
     }
     check(host.writers().acceptances() == count, "batch did not commit every sample");
+    const Values latest{Vector2{7, 5}, int32_t(9)};
+    if (!legacy) {
+        const auto* grant = guest.writers().grant(1);
+        check(grant && guest.writers().submit(1, grant->epoch, 2, latest), "submit newer state before ACK flush");
+        now += 30ms;
+        guest.flush(now);
+        for (const auto& event : server.poll(now)) host.receive(event, now);
+        check(host.writers().acceptances() == count + 1 && host.traffic().authority_ack_coalesces >= 1,
+              "Newer sample replaces the queued receipt");
+    }
+    host.flush(now);
     std::size_t receipts = 0;
     for (const auto& event : client.poll(now)) {
         const auto type = kind(event);
@@ -992,10 +1003,14 @@ void test_authority_batch(bool legacy) {
         }
         guest.receive(event, now);
     }
-    check(receipts == states.size(), "state and receipt message counts differ");
-    for (ObjectId id = 1; id <= count; ++id)
-        check(host.object(id)->values == moved(id) && guest.writers().grant(id)->confirmed == 1,
-              "batch state or ACK value ignored");
+    check(legacy ? receipts == states.size() : receipts > 0 && receipts < states.size(),
+          "Negotiated receipts are packed separately from state messages");
+    for (ObjectId id = 1; id <= count; ++id) {
+        const bool updated = !legacy && id == 1;
+        check(host.object(id)->values == (updated ? latest : moved(id)) &&
+              guest.writers().grant(id)->confirmed == (updated ? 2u : 1u),
+              "Latest state and cumulative ACK converge");
+    }
 }
 
 void test_grant_replication_baseline() {

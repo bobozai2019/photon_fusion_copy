@@ -332,6 +332,7 @@ void GameSession::flush(TimePoint now) {
     Outbound::Collect collect(link_);
     prediction_.flush();
     if (host_) {
+        writers_.flush_receipts(link_);
         // A reliable lane already retries delivery. Keep a slower application retry for snapshots
         // that could not be queued locally, and continue offering every new revision immediately.
         constexpr auto retry_window = std::chrono::milliseconds(200);
@@ -340,11 +341,12 @@ void GameSession::flush(TimePoint now) {
         for (const auto& [player, member] : host_->members()) {
             if (!member.peer)
                 continue;
-            // Wait for the reliable FIFO to accept its unsent suffix before adding more state.
-            // The next offer will use current revisions against the same per-peer ACKs.
-            if (link_.admit_snapshot(member.peer)) {
+            // Defer before encoding. The next offer uses current revisions against this peer's ACKs.
+            if (const auto budget = link_.snapshot_packet_budget(member.peer)) {
                 auto codec = codecs_.find(member.peer);
-                auto packets = state_.packets(member.peer, room(), round(), tick_, retry_ticks);
+                bool budget_yield = false;
+                auto packets = state_.packets(member.peer, room(), round(), tick_, retry_ticks, budget, &budget_yield);
+                if (budget_yield) link_.snapshot_budget_yield();
                 if (codec != codecs_.end())
                     codec->second.encode_batch(packets, room(), round());
                 link_.send_messages(member.peer, Lane::Game, std::move(packets));

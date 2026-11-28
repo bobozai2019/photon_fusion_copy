@@ -14,7 +14,9 @@ public:
     explicit Outbound(std::unique_ptr<Transport> link);
     bool send(Peer peer, Lane lane, const Bytes& payload) override;
     void send_messages(Peer peer, Lane lane, std::vector<Bytes> messages);
-    bool admit_snapshot(Peer peer);
+    std::size_t state_packet_budget(Peer peer) const;
+    std::size_t snapshot_packet_budget(Peer peer);
+    void snapshot_budget_yield() { ++snapshot_budget_yields_; }
     void close(Peer peer) override;
     std::vector<Event> poll(TimePoint now) override;
     Traffic traffic() const override;
@@ -58,6 +60,8 @@ private:
     std::size_t bytes_ = 0;
     std::size_t peak_ = 0;
     std::uint64_t snapshot_backpressure_skips_ = 0;
+    std::uint64_t snapshot_soft_skips_ = 0;
+    std::uint64_t snapshot_budget_yields_ = 0;
 };
 
 }

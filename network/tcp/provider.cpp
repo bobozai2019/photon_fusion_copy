@@ -217,6 +217,7 @@ struct Frame {
     uint64_t queued_at;
     std::vector<uint8_t> wire;
     size_t offset = 0;
+    Frame *next_in_lane = nullptr;
 };
 
 struct Peer {
@@ -229,6 +230,7 @@ struct Peer {
     std::optional<uint64_t> connecting_since;
     std::optional<uint64_t> draining_since;
     std::list<Frame> send_queue;
+    std::array<Frame *, NC_TRANSPORT_LANE_COUNT> oldest{}, newest{};
     size_t queue_size = 0;
     std::vector<uint8_t> input;
     size_t read_offset = 0;
@@ -264,6 +266,8 @@ struct nc_transport_instance {
         peer.ended = reason;
         peer.socket.reset();
         peer.send_queue.clear();
+        peer.oldest.fill(nullptr);
+        peer.newest.fill(nullptr);
         peer.queue_size = 0;
         for (uint32_t lane = 0; lane < NC_TRANSPORT_LANE_COUNT; ++lane) {
             stats.lane[lane].queued_bytes -= peer.stats.lane[lane].queued_bytes;
@@ -334,6 +338,8 @@ struct nc_transport_instance {
                 total.queued_bytes -= payload_size;
                 local.queued_bytes -= payload_size;
                 peer.queue_size -= frame.wire.size();
+                peer.oldest[frame.lane] = frame.next_in_lane;
+                if (!frame.next_in_lane) peer.newest[frame.lane] = nullptr;
                 peer.send_queue.pop_front();
             }
         }
@@ -471,6 +477,13 @@ nc_transport_result NC_TRANSPORT_CALL send_tcp(nc_transport_instance *instance, 
             wire_size += size;
             payload_size += message.size;
         }
+        // List nodes stay at the same address across splice. Link each lane's
+        // timestamps separately so stats never need to walk the FIFO.
+        for (auto &frame : staged) {
+            if (peer->newest[lane]) peer->newest[lane]->next_in_lane = &frame;
+            else peer->oldest[lane] = &frame;
+            peer->newest[lane] = &frame;
+        }
         peer->send_queue.splice(peer->send_queue.end(), staged);
         peer->queue_size += wire_size;
         for (auto *stats : {&instance->stats.lane[lane], &peer->stats.lane[lane]}) {
@@ -531,19 +544,22 @@ nc_transport_result NC_TRANSPORT_CALL caps_tcp(nc_transport_instance *instance, 
 nc_transport_result NC_TRANSPORT_CALL stats_tcp(nc_transport_instance *instance, nc_transport_peer id,
                                                 nc_transport_stats *out) {
     if (!instance || !out) return NC_TRANSPORT_INVALID_ARGUMENT;
-    auto peer = instance->find(id);
-    if (id && peer == instance->peers.end()) return NC_TRANSPORT_PEER_CLOSED;
-    *out = id ? peer->stats : instance->stats;
-    for (const auto &entry : instance->peers) {
-        if (id && id != entry.id) continue;
-        bool found[NC_TRANSPORT_LANE_COUNT]{};
-        for (const auto &frame : entry.send_queue) {
-            if (found[frame.lane]) continue;
-            found[frame.lane] = true;
-            auto &age = out->lane[frame.lane].oldest_queued_us;
-            age = std::max(age, instance->now - frame.queued_at);
-            if (found[0] && found[1]) break;
+    const auto accumulate_age = [&](const Peer &peer) {
+        for (uint32_t lane = 0; lane < NC_TRANSPORT_LANE_COUNT; ++lane) {
+            if (const auto *frame = peer.oldest[lane]) {
+                auto &age = out->lane[lane].oldest_queued_us;
+                age = std::max(age, instance->now - frame->queued_at);
+            }
         }
+    };
+    if (id) {
+        const auto peer = instance->find(id);
+        if (peer == instance->peers.end()) return NC_TRANSPORT_PEER_CLOSED;
+        *out = peer->stats;
+        accumulate_age(*peer);
+    } else {
+        *out = instance->stats;
+        for (const auto &peer : instance->peers) accumulate_age(peer);
     }
     return NC_TRANSPORT_OK;
 }

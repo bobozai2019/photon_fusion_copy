@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <stdexcept>
 
 namespace netcode {
@@ -11,6 +12,9 @@ constexpr std::size_t control_reserve = 128 * 1024;
 constexpr std::size_t game_message_budget = 2048;
 constexpr std::size_t control_message_reserve = 128;
 constexpr std::size_t max_batch = 64;
+constexpr std::size_t snapshot_window = 64 * 1024;
+constexpr std::size_t snapshot_per_flush = 32 * 1024;
+constexpr std::uint64_t snapshot_max_queue_age_us = 50'000;
 constexpr auto close_grace = std::chrono::seconds(3);
 
 Transport& require_link(const std::unique_ptr<Transport>& link) {
@@ -80,13 +84,34 @@ void Outbound::send_messages(Peer peer, Lane lane, std::vector<Bytes> messages) 
     }
 }
 
-bool Outbound::admit_snapshot(Peer peer) {
-    if (!backpressure_ || !reliable_ordered(Lane::Game)) return true;
+std::size_t Outbound::state_packet_budget(Peer peer) const {
+    if (!backpressure_ || !reliable_ordered(Lane::Game))
+        return std::numeric_limits<std::size_t>::max();
     const auto found = peers_.find(peer);
-    if (found == peers_.end() || found->second.close_started) return false;
-    if (!found->second.blocked) return true;
-    ++snapshot_backpressure_skips_;
-    return false;
+    if (found == peers_.end() || found->second.close_started || found->second.blocked) return 0;
+    const auto& stream = found->second;
+    const auto provider = link_.peer_traffic(peer);
+    const auto queued = stream.bytes + provider.queued_bytes;
+    const auto core_age = stream.queued.empty() ? 0 :
+        std::chrono::duration_cast<std::chrono::microseconds>(now_ - stream.queued.front().queued_at).count();
+    if (queued > snapshot_window - game_payload_limit ||
+        std::max(provider.oldest_queued_us, static_cast<std::uint64_t>(core_age)) >= snapshot_max_queue_age_us ||
+        stream.queued.size() >= game_message_budget) return 0;
+    return std::min({snapshot_per_flush / game_payload_limit,
+                     (snapshot_window - queued) / game_payload_limit,
+                     game_message_budget - stream.queued.size()});
+}
+
+std::size_t Outbound::snapshot_packet_budget(Peer peer) {
+    const auto budget = state_packet_budget(peer);
+    if (!budget) {
+        const auto found = peers_.find(peer);
+        if (found != peers_.end() && !found->second.close_started) {
+            ++snapshot_backpressure_skips_;
+            if (!found->second.blocked) ++snapshot_soft_skips_;
+        }
+    }
+    return budget;
 }
 
 void Outbound::discard(Stream& stream) {
@@ -171,6 +196,8 @@ Traffic Outbound::traffic() const {
     stats.queued_bytes += bytes_;
     stats.core_peak_queued_bytes = peak_;
     stats.snapshot_backpressure_skips = snapshot_backpressure_skips_;
+    stats.snapshot_soft_skips = snapshot_soft_skips_;
+    stats.snapshot_budget_yields = snapshot_budget_yields_;
     for (const auto& [peer, stream] : peers_) {
         if (stream.queued.empty()) continue;
         const auto age = std::chrono::duration_cast<std::chrono::microseconds>(now_ - stream.queued.front().queued_at);

@@ -483,10 +483,13 @@ bool AuthorityState::baseline_complete(Peer peer) const
     });
 }
 
-std::vector<Bytes> AuthorityState::packets(Peer peer, RoomId room, RoundId round, Tick send_tick, Tick retry_ticks)
+std::vector<Bytes> AuthorityState::packets(Peer peer, RoomId room, RoundId round, Tick send_tick,
+                                           Tick retry_ticks, std::size_t max_packets, bool* budget_yield)
 {
     auto& progress = peers_.at(peer);
     std::vector<Bytes> result;
+    if (budget_yield) *budget_yield = false;
+    if (!max_packets) return result;
     Writer records, record, data, delta;
     std::uint8_t count = 0;
     const auto flush = [&] {
@@ -503,10 +506,11 @@ std::vector<Bytes> AuthorityState::packets(Peer peer, RoomId room, RoundId round
     };
     // For dense interest, a sequential walk avoids a tree lookup per candidate.
     const bool sparse = progress.baseline.size() + progress.pending_exits.size() <= entries_.size() / 2;
-    auto visible = progress.baseline.cbegin();
-    auto exiting = progress.pending_exits.cbegin();
-    auto next = entries_.begin();
-    auto confirmed = progress.ack.cbegin();
+    const auto cursor = progress.snapshot_cursor;
+    auto visible = progress.baseline.upper_bound(cursor);
+    auto exiting = progress.pending_exits.upper_bound(cursor);
+    auto next = entries_.upper_bound(cursor);
+    auto confirmed = progress.ack.upper_bound(cursor);
     while (sparse ? visible != progress.baseline.cend() || exiting != progress.pending_exits.cend()
                   : next != entries_.end()) {
         if (sparse) {
@@ -620,13 +624,21 @@ std::vector<Bytes> AuthorityState::packets(Peer peer, RoomId room, RoundId round
             record.append(data.bytes());
         }
         if (snapshot_header_size + records.bytes().size() + record.bytes().size() > game_payload_limit ||
-            count == max_snapshot_records) flush();
+            count == max_snapshot_records) {
+            flush();
+            if (result.size() == max_packets) {
+                if (budget_yield) *budget_yield = true;
+                return result;
+            }
+        }
+        progress.snapshot_cursor = id;
         ++count;
         records.append(record.bytes());
         if (was_sent) sent->second = {revision, send_tick};
         else progress.sent.emplace(id, Progress::Sent{revision, send_tick});
     }
     flush();
+    progress.snapshot_cursor = 0;
     return result;
 }
 

@@ -37,6 +37,9 @@ struct Traffic {
     std::size_t core_peak_queued_bytes = 0;
     std::uint64_t oldest_queued_us = 0;
     std::uint64_t snapshot_backpressure_skips = 0;
+    std::uint64_t snapshot_soft_skips = 0;
+    std::uint64_t snapshot_budget_yields = 0;
+    std::uint64_t authority_ack_coalesces = 0;
 };
 
 enum class SendStatus { Accepted, Blocked, Closed, Invalid, Failed };
@@ -59,6 +62,7 @@ public:
     virtual bool reliable_ordered(Lane) const { return false; }
     virtual void close(Peer peer) = 0;
     virtual Traffic traffic() const = 0;
+    virtual Traffic peer_traffic(Peer) const { return {}; }
 };
 
 struct DirectConfig {

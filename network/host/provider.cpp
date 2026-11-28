@@ -118,9 +118,11 @@ public:
 
     void close(Peer peer) override { api_.close_peer(instance_.get(), peer); }
 
-    Traffic traffic() const override {
+    Traffic traffic() const override { return peer_traffic(NC_TRANSPORT_ALL_PEERS); }
+
+    Traffic peer_traffic(Peer peer) const override {
         nc_transport_stats stats{};
-        if (api_.get_stats(instance_.get(), NC_TRANSPORT_ALL_PEERS, &stats) != NC_TRANSPORT_OK) return {};
+        if (api_.get_stats(instance_.get(), peer, &stats) != NC_TRANSPORT_OK) return {};
         Traffic out;
         const auto& control = stats.lane[NC_TRANSPORT_CONTROL];
         const auto& game = stats.lane[NC_TRANSPORT_GAME];

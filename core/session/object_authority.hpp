@@ -8,6 +8,8 @@
 
 namespace netcode {
 
+class Outbound;
+
 // Values are in the order of the model's registered field IDs. Recovery is
 // opaque model state required by the next writer, e.g. an integrator's velocity.
 struct AuthoritySample {
@@ -105,6 +107,7 @@ public:
     // Lifetime totals survive round resets for disconnect and rejoin telemetry.
     std::uint64_t submissions() const { return submissions_; }
     std::uint64_t acceptances() const { return acceptances_; }
+    std::uint64_t receipt_coalesces() const { return receipt_coalesces_; }
 
 private:
     friend class ScriptGame;
@@ -120,6 +123,11 @@ private:
         Validate validate;
         WordLayout layout{};
     };
+    struct PendingReceipt {
+        std::uint32_t epoch;
+        std::uint32_t sequence;
+    };
+    using Receipts = std::map<ObjectId, PendingReceipt>;
     struct Participant {
         PlayerId player;
         bool offered = false;
@@ -128,6 +136,8 @@ private:
         Tick last_request = 0;
         bool writable = true;
         bool state_batches = false;
+        Receipts receipts{};
+        ObjectId receipt_cursor = 0;
     };
     struct ReceiveBuffers {
         AuthoritySample sample;
@@ -139,8 +149,9 @@ private:
     static void merge(const Model& model, const Values& fields, Values& target);
     void notify(const ObjectGrant& grant);
     void receive_grant(Reader& in);
-    void receive_state(Peer peer, PlayerId player, Reader& in, Tick now, bool delta, Writer* receipts = nullptr);
-    void receive_state_batch(Peer peer, PlayerId player, Reader in, Tick now);
+    void receive_state(Peer peer, PlayerId player, Reader& in, Tick now, bool delta, Receipts* receipts = nullptr);
+    void receive_state_batch(Peer peer, Participant& participant, Reader in, Tick now);
+    void flush_receipts(Outbound& link);
     void receive_ack(Reader& in);
     GameMessage encode_state(Writer& out, Writer& delta, const ObjectGrant& grant);
     bool send_request(ObjectId object, bool release);
@@ -175,7 +186,7 @@ private:
     std::map<ObjectId, Words> accepted_words_;
     Words sampled_words_;
     ReceiveBuffers receive_buffers_;
-    std::uint64_t submissions_ = 0, acceptances_ = 0;
+    std::uint64_t submissions_ = 0, acceptances_ = 0, receipt_coalesces_ = 0;
     std::map<SchemaId, Model> models_;
     std::map<ObjectId, ObjectGrant> grants_;
     std::set<ObjectId> awaiting_object_, restoring_writer_;

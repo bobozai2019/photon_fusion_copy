@@ -81,7 +81,11 @@ class GameSession {
         return true;
     }
     const NetworkClock& clock() const { return clock_; }
-    Traffic traffic() const { return link_.traffic(); }
+    Traffic traffic() const {
+        auto stats = link_.traffic();
+        stats.authority_ack_coalesces = writers_.receipt_coalesces();
+        return stats;
+    }
     std::function<void(const AppliedSnapshot&)> on_snapshot;
     std::function<void(const ObjectGrant&)> on_grant;
 

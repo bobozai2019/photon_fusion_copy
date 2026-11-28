@@ -31,7 +31,9 @@ public:
     std::vector<Event> poll(TimePoint) override { return std::exchange(events, {}); }
     void close(Peer peer) override { check(peer == 4, "Wrong close"); closed = true; }
     Traffic traffic() const override { return {}; }
+    Traffic peer_traffic(Peer peer) const override { return peer == 4 ? slow_peer : Traffic{}; }
 
+    Traffic slow_peer{};
     bool closed = false;
     size_t slots = 0;
     std::vector<Event> events{{EventType::Open, 4}};
@@ -48,14 +50,14 @@ void test_outbound() {
         check(out.send(4, Lane::Game, {2, 9}), "Stage RPC");
         out.send_messages(4, Lane::Game, {{4, 5}, {6, 7}});
         check(out.send(4, Lane::Control, {11}), "Stage control");
-        check(out.admit_snapshot(4), "Collecting messages without transport backpressure");
+        check(out.snapshot_packet_budget(4), "Collecting messages without transport backpressure");
         check(link.attempts.empty(), "Batch escaped before flush");
         link.slots = 1;
         out.flush(TimePoint{} + 2ms);
     }
     check(out.traffic().queued_bytes == 5 && out.traffic().oldest_queued_us == 1000, "Pending statistics");
     check(link.attempts == decltype(link.attempts){{Lane::Game, 3}}, "Grouped Game messages");
-    check(!out.admit_snapshot(4) && out.traffic().snapshot_backpressure_skips == 1,
+    check(!out.snapshot_packet_budget(4) && out.traffic().snapshot_backpressure_skips == 1,
           "Partial acceptance blocks another snapshot offer");
     out.close(4);
     check(!link.closed && !out.send(4, Lane::Control, {12}), "Close must wait behind queue");
@@ -116,12 +118,57 @@ void test_snapshot_admission() {
     Outbound out(link);
     const auto start = TimePoint{} + 1ms;
     out.poll(start);
-    check(out.admit_snapshot(4), "New peer has no pending backpressure");
-    check(out.send(4, Lane::Game, {42}) && !out.admit_snapshot(4), "Immediate block stages a retry");
+    check(out.snapshot_packet_budget(4), "New peer has no pending backpressure");
+    check(out.send(4, Lane::Game, {42}) && !out.snapshot_packet_budget(4), "Immediate block stages a retry");
     link.slots = 1;
     out.poll(start + 1ms);
-    check(out.admit_snapshot(4) && out.traffic().queued_bytes == 0 &&
+    check(out.snapshot_packet_budget(4) && out.traffic().queued_bytes == 0 &&
           link.sent == decltype(link.sent){{Lane::Game, {42}}}, "Snapshot offers resume after ordered drain");
+
+    link.events.push_back({EventType::Open, 7});
+    out.poll(start + 2ms);
+    const auto healthy_budget = out.snapshot_packet_budget(7);
+    link.slow_peer.queued_bytes = 60 * 1024;
+    check(out.snapshot_packet_budget(4) > 0 && out.snapshot_packet_budget(4) < healthy_budget,
+          "Provider backlog shrinks the budget before it blocks");
+    link.slow_peer.oldest_queued_us = 60'000;
+    check(!out.snapshot_packet_budget(4) && out.snapshot_packet_budget(7) == healthy_budget,
+          "An old provider queue defers only that peer before hard backpressure");
+    check(out.traffic().snapshot_soft_skips == 1, "Provider pressure is separate from hard blocking");
+    link.slots = 1;
+    check(out.send(4, Lane::Control, {9}), "A deferred snapshot leaves Control admissible");
+    link.slow_peer = {};
+    check(out.snapshot_packet_budget(4) == healthy_budget, "Provider drain restores snapshot budget");
+}
+
+void test_snapshot_budget_rotation() {
+    Schemas schemas;
+    schemas.add({1, 1, {{1, FieldType::Int}}});
+    AuthorityState state(schemas);
+    state.attach(4);
+    for (ObjectId id = 1; id <= 110; ++id)
+        check(state.create(id, 1, 1, {int32_t(id)}, 1), "Create budget fixture");
+
+    ReplicaState replica(schemas);
+    const auto receive = [&](Tick tick) {
+        bool yielded = false;
+        auto packets = state.packets(4, 1, 1, tick, 200, 1, &yielded);
+        check(packets.size() == 1, "Snapshot respects one-packet budget");
+        Reader in(packets.front());
+        GameMessage type;
+        AppliedSnapshot applied;
+        check(read_game_header(in, type, 1, 1) && type == GameMessage::Snapshot, "Read budgeted snapshot header");
+        check(replica.apply(in, 1, 1, applied), "Receive budgeted snapshot");
+        return yielded;
+    };
+    check(receive(1) && !replica.objects().count(110), "First packet yields before the tail");
+    check(state.capture(1, {int32_t(999)}, 2), "Change an earlier entry");
+    check(state.capture(110, {int32_t(222)}, 2), "Change the deferred entry");
+    for (Tick tick = 2; tick != 12 && !replica.objects().count(110); ++tick) receive(tick);
+    check(replica.objects().count(110) && replica.objects().at(110).values == Values{int32_t(222)},
+          "Deferred object gets the latest revision even while earlier entries change");
+    receive(12);
+    check(replica.objects().at(1).values == Values{int32_t(999)}, "The cursor wraps to the updated prefix");
 }
 
 void test_memory_session() {
@@ -156,6 +203,7 @@ void test_memory_session() {
 int main() try {
     test_outbound();
     test_snapshot_admission();
+    test_snapshot_budget_rotation();
     test_memory_contract();
     test_memory_session();
 } catch (const std::exception& error) {

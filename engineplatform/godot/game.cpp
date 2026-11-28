@@ -403,6 +403,9 @@ Dictionary NetcodeGame::transport_stats() {
     result["core_peak_queued_bytes"] = static_cast<int64_t>(stats.core_peak_queued_bytes);
     result["oldest_queued_us"] = static_cast<int64_t>(stats.oldest_queued_us);
     result["snapshot_backpressure_skips"] = static_cast<int64_t>(stats.snapshot_backpressure_skips);
+    result["snapshot_soft_skips"] = static_cast<int64_t>(stats.snapshot_soft_skips);
+    result["snapshot_budget_yields"] = static_cast<int64_t>(stats.snapshot_budget_yields);
+    result["authority_ack_coalesces"] = static_cast<int64_t>(stats.authority_ack_coalesces);
     return result;
 }
 bool NetcodeGame::model(int schema, const PackedInt32Array& fields, int policy, int cooldown) {
